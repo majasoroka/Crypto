@@ -1,405 +1,496 @@
-let coinsData = [];
-let currentCoin = null;
-let orderType = 'BUY'; // BUY or SELL
-let leverage = 1;
-let activeTab = 'positions';
-let chartInterval = '24H';
+// --- GLOBAL APPLICATION STATE ---
+let marketAssets = [];
+let selectedAsset = null;
+let orderMode = 'BUY';
+let orderType = 'MARKET';
+let portfolioTimeframe = '1D';
 
-let state = JSON.parse(localStorage.getItem('nexusx_state')) || {
+let accountState = JSON.parse(localStorage.getItem('robinhood_ultimate_state')) || {
     cash: 10000,
-    initialCash: 10000,
-    positions: [],
-    history: []
+    positions: [], // { id, symbol, name, shares, avgPrice, type, image }
+    history: [     // { id, type, symbol, shares, price, total, time }
+        { id: '1', type: 'DEPOSIT', symbol: 'USD', shares: 10000, price: 1, total: 10000, time: new Date().toLocaleDateString() }
+    ]
 };
 
-let chart, candleSeries;
+let chart, lineSeries;
 
+// --- INITIALIZATION ---
+window.onload = async () => {
+    initChart();
+    await fetchMarketData();
+    setupSearchListener();
+    setInterval(pollLiveMarkets, 15000); // Live price updates
+};
+
+// --- CHART SETUP ---
 function initChart() {
     const container = document.getElementById('chart-container');
     container.innerHTML = '';
     chart = LightweightCharts.createChart(container, {
         layout: {
-            background: { color: '#181a20' },
-            textColor: '#848e9c',
+            background: { color: '#ffffff' },
+            textColor: '#1e222d',
         },
         grid: {
-            vertLines: { color: '#2b313a' },
-            horzLines: { color: '#2b313a' },
+            vertLines: { color: '#f4f6f8' },
+            horzLines: { color: '#f4f6f8' },
         },
         timeScale: {
             timeVisible: true,
-            secondsVisible: false,
-            borderColor: '#2b313a'
+            borderColor: '#e8ebef'
         },
         rightPriceScale: {
-            borderColor: '#2b313a'
+            borderColor: '#e8ebef'
         }
     });
-    candleSeries = chart.addCandlestickSeries({
-        upColor: '#0ecb81',
-        downColor: '#f6465d',
-        borderVisible: false,
-        wickUpColor: '#0ecb81',
-        wickDownColor: '#f6465d',
+    lineSeries = chart.addAreaSeries({
+        topColor: 'rgba(0, 200, 5, 0.25)',
+        bottomColor: 'rgba(0, 200, 5, 0.0)',
+        lineColor: '#00c805',
+        lineWidth: 2.5,
     });
 }
 
-async function fetchMarkets() {
+// --- DATA FETCHING (Live Crypto + Stochastic Stock Simulation) ---
+async function fetchMarketData() {
     try {
-        const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=25&page=1&sparkline=false');
-        const data = await res.json();
-        coinsData = data;
-        if (!currentCoin && data.length > 0) {
-            currentCoin = data[0]; 
-            loadCoinChart(currentCoin.id);
-        }
-        renderCoinList();
-        renderTicker();
-        updateUI();
-    } catch (err) {
-        console.error("API Error, using fallback simulation data", err);
-    }
-}
+        const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=15&page=1&sparkline=true');
+        const cryptoData = await res.json();
 
-async function loadCoinChart(coinId) {
-    const coin = coinsData.find(c => c.id === coinId) || currentCoin;
-    currentCoin = coin;
-    
-    document.getElementById('active-coin-title').innerText = `${coin.name} / USD`;
-    document.getElementById('active-coin-price').innerText = `$${coin.current_price.toLocaleString()}`;
-    const changeElem = document.getElementById('active-coin-change');
-    const isPos = coin.price_change_percentage_24h >= 0;
-    changeElem.innerText = `${isPos ? '+' : ''}${coin.price_change_percentage_24h.toFixed(2)}%`;
-    changeElem.className = `text-xs px-1.5 py-0.5 rounded font-bold ${isPos ? 'bg-accentGreen/20 text-accentGreen' : 'bg-accentRed/20 text-accentRed'}`;
+        // Premium Stock Fallbacks with stochastic variation
+        const stockAssets = [
+            { id: 'apple', symbol: 'AAPL', name: 'Apple Inc.', current_price: 226.50, price_change_percentage_24h: 1.45, type: 'stock', image: 'https://assets.coingecko.com/coins/images/325/large/Tether.png', sparkline_in_7d: { price: [220, 222, 224, 226.5] } },
+            { id: 'tesla', symbol: 'TSLA', name: 'Tesla Motors', current_price: 242.80, price_change_percentage_24h: -2.10, type: 'stock', image: 'https://assets.coingecko.com/coins/images/6319/large/USD_Coin_icon.png', sparkline_in_7d: { price: [250, 248, 245, 242.8] } },
+            { id: 'nvidia', symbol: 'NVDA', name: 'NVIDIA Corp', current_price: 128.40, price_change_percentage_24h: 3.82, type: 'stock', image: 'https://assets.coingecko.com/coins/images/279/large/ethereum.png', sparkline_in_7d: { price: [122, 124, 126, 128.4] } },
+            { id: 'microsoft', symbol: 'MSFT', name: 'Microsoft Corp', current_price: 415.20, price_change_percentage_24h: 0.92, type: 'stock', image: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png', sparkline_in_7d: { price: [410, 412, 413, 415.2] } },
+            { id: 'amazon', symbol: 'AMZN', name: 'Amazon.com Inc', current_price: 186.70, price_change_percentage_24h: -0.45, type: 'stock', image: 'https://assets.coingecko.com/coins/images/325/large/Tether.png', sparkline_in_7d: { price: [188, 187, 186, 186.7] } }
+        ];
 
-    try {
-        const res = await fetch(`https://api.coingecko.com/api/v3/coins/${coinId}/ohlc?vs_currency=usd&days=1`);
-        const ohlcData = await res.json();
-        const formattedData = ohlcData.map(item => ({
-            time: item[0] / 1000,
-            open: item[1],
-            high: item[2],
-            low: item[3],
-            close: item[4]
+        const formattedCrypto = cryptoData.map(c => ({
+            id: c.id,
+            symbol: c.symbol.toUpperCase(),
+            name: c.name,
+            current_price: c.current_price,
+            price_change_percentage_24h: c.price_change_percentage_24h || 0,
+            type: 'crypto',
+            image: c.image,
+            sparkline_in_7d: c.sparkline_in_7d
         }));
-        candleSeries.setData(formattedData);
-        chart.timeScale().fitContent();
+
+        marketAssets = [...stockAssets, ...formattedCrypto];
+
+        if (!selectedAsset && marketAssets.length > 0) {
+            selectedAsset = marketAssets[0];
+            loadAssetIntoTradePanel(selectedAsset);
+        }
+
+        renderWatchlist();
+        renderCryptoHub();
+        loadOptionsChain();
+        updateUI();
     } catch (e) {
-        generateMockCandles(coin.current_price);
+        console.error("Market fetch error:", e);
     }
 }
 
-function generateMockCandles(basePrice) {
-    let candles = [];
-    let time = Math.floor(Date.now() / 1000) - 86400;
-    let price = basePrice * 0.98;
-    for (let i = 0; i < 50; i++) {
-        let open = price;
-        let close = open + (Math.random() - 0.48) * (basePrice * 0.01);
-        let high = Math.max(open, close) + Math.random() * (basePrice * 0.005);
-        let low = Math.min(open, close) - Math.random() * (basePrice * 0.005);
-        candles.push({ time, open, high, low, close });
-        time += 1800;
-        price = close;
-    }
-    candleSeries.setData(candles);
-    chart.timeScale().fitContent();
+async function pollLiveMarkets() {
+    // Slight random walk simulation for hyper-realism
+    marketAssets.forEach(asset => {
+        const delta = (Math.random() - 0.49) * (asset.current_price * 0.002);
+        asset.current_price = parseFloat((asset.current_price + delta).toFixed(2));
+    });
+    updateUI();
 }
 
-function renderCoinList(filter = '') {
-    const listElem = document.getElementById('coin-list');
-    listElem.innerHTML = '';
-    const filtered = coinsData.filter(c => c.name.toLowerCase().includes(filter.toLowerCase()) || c.symbol.toLowerCase().includes(filter.toLowerCase()));
-    
-    filtered.forEach(coin => {
-        const isSelected = currentCoin && currentCoin.id === coin.id;
-        const isPos = coin.price_change_percentage_24h >= 0;
+// --- NAVIGATION & VIEWS ---
+function switchView(viewName) {
+    ['portfolio', 'crypto', 'options', 'history'].forEach(v => {
+        document.getElementById(`view-${v}`).classList.add('hidden');
+        document.getElementById(`view-${v}`).classList.remove('grid');
+        document.getElementById(`nav-btn-${v}`).className = 'text-gray-500 hover:text-black py-5 transition';
+    });
+
+    const target = document.getElementById(`view-${viewName}`);
+    target.classList.remove('hidden');
+    if (viewName === 'portfolio' || viewName === 'crypto') target.classList.add('grid');
+    document.getElementById(`nav-btn-${viewName}`).className = 'text-black border-b-2 border-black py-5 transition';
+}
+
+// --- SEARCH & WATCHLIST ---
+function setupSearchListener() {
+    const input = document.getElementById('global-search');
+    const dropdown = document.getElementById('search-dropdown');
+
+    input.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase();
+        if (!query) {
+            dropdown.classList.add('hidden');
+            return;
+        }
+        const results = marketAssets.filter(a => a.name.toLowerCase().includes(query) || a.symbol.toLowerCase().includes(query));
+        dropdown.innerHTML = '';
+        if (results.length === 0) {
+            dropdown.innerHTML = `<div class="p-3 text-xs text-gray-400">No assets found</div>`;
+        } else {
+            results.forEach(asset => {
+                const div = document.createElement('div');
+                div.className = 'p-3 flex items-center justify-between hover:bg-rhGray cursor-pointer';
+                div.innerHTML = `
+                    <div class="flex items-center space-x-2.5">
+                        <img src="${asset.image}" class="w-6 h-6 rounded-full">
+                        <div><div class="font-bold text-xs uppercase text-black">${asset.symbol}</div><div class="text-[10px] text-gray-400">${asset.name}</div></div>
+                    </div>
+                    <div class="text-right font-bold text-xs">$${asset.current_price.toLocaleString()}</div>
+                `;
+                div.onclick = () => {
+                    loadAssetIntoTradePanel(asset);
+                    dropdown.classList.add('hidden');
+                    input.value = '';
+                    switchView('portfolio');
+                };
+                dropdown.appendChild(div);
+            });
+        }
+        dropdown.classList.remove('hidden');
+    });
+}
+
+function renderWatchlist() {
+    const container = document.getElementById('watchlist-container');
+    container.innerHTML = '';
+    marketAssets.slice(0, 8).forEach(asset => {
+        const isPos = asset.price_change_percentage_24h >= 0;
         const div = document.createElement('div');
-        div.className = `p-3 flex items-center justify-between cursor-pointer hover:bg-cardBorder/50 transition ${isSelected ? 'bg-cardBorder/70 border-l-2 border-accentYellow' : ''}`;
-        div.onclick = () => loadCoinChart(coin.id);
+        div.className = 'flex items-center justify-between py-3 px-2 hover:bg-rhGray rounded-2xl cursor-pointer transition';
+        div.onclick = () => loadAssetIntoTradePanel(asset);
         div.innerHTML = `
-            <div class="flex items-center space-x-2">
-                <img src="${coin.image}" class="w-6 h-6 rounded-full">
-                <div>
-                    <div class="text-xs font-bold text-white uppercase">${coin.symbol}</div>
-                    <div class="text-[10px] text-gray-400">${coin.name}</div>
-                </div>
+            <div class="flex items-center space-x-3">
+                <img src="${asset.image}" class="w-8 h-8 rounded-full">
+                <div><div class="font-bold text-sm uppercase text-black">${asset.symbol}</div><div class="text-xs text-gray-500">${asset.name}</div></div>
             </div>
             <div class="text-right">
-                <div class="text-xs font-semibold text-white">$${coin.current_price.toLocaleString()}</div>
-                <div class="text-[10px] ${isPos ? 'text-accentGreen' : 'text-accentRed'}">${isPos ? '+' : ''}${coin.price_change_percentage_24h.toFixed(2)}%</div>
+                <div class="font-bold text-sm text-black">$${asset.current_price.toLocaleString()}</div>
+                <div class="text-xs font-semibold ${isPos ? 'text-rhGreen' : 'text-rhRed'}">${isPos ? '+' : ''}${asset.price_change_percentage_24h.toFixed(2)}%</div>
             </div>
-        `;
-        listElem.appendChild(div);
-    });
-}
-
-function renderTicker() {
-    const ticker = document.getElementById('ticker-tape');
-    ticker.innerHTML = '';
-    coinsData.slice(0, 10).forEach(coin => {
-        const isPos = coin.price_change_percentage_24h >= 0;
-        const span = document.createElement('div');
-        span.className = 'inline-flex items-center space-x-2 mr-6';
-        span.innerHTML = `
-            <span class="text-white font-bold uppercase">${coin.symbol}/USD</span>
-            <span class="text-gray-300">$${coin.current_price.toLocaleString()}</span>
-            <span class="${isPos ? 'text-accentGreen' : 'text-accentRed'}">${isPos ? '+' : ''}${coin.price_change_percentage_24h.toFixed(2)}%</span>
-        `;
-        ticker.appendChild(span);
-    });
-}
-
-document.getElementById('coin-search').addEventListener('input', (e) => {
-    renderCoinList(e.target.value);
-});
-
-function setOrderType(type) {
-    orderType = type;
-    const buyBtn = document.getElementById('btn-buy-mode');
-    const sellBtn = document.getElementById('btn-sell-mode');
-    const execBtn = document.getElementById('execute-btn');
-
-    if (type === 'BUY') {
-        buyBtn.className = 'py-1.5 rounded bg-accentGreen text-darkBg cursor-pointer transition font-bold';
-        sellBtn.className = 'py-1.5 rounded text-gray-400 cursor-pointer transition';
-        execBtn.className = 'w-full py-3 rounded font-bold text-sm bg-accentGreen text-darkBg hover:opacity-90 transition shadow-lg';
-        execBtn.innerText = 'Open Long Position';
-    } else {
-        buyBtn.className = 'py-1.5 rounded text-gray-400 cursor-pointer transition';
-        sellBtn.className = 'py-1.5 rounded bg-accentRed text-darkBg cursor-pointer transition font-bold';
-        execBtn.className = 'w-full py-3 rounded font-bold text-sm bg-accentRed text-darkBg hover:opacity-90 transition shadow-lg';
-        execBtn.innerText = 'Open Short Position';
-    }
-}
-
-function updateLeverage(val) {
-    leverage = parseInt(val);
-    document.getElementById('leverage-label').innerText = `${leverage}x`;
-    calculateSummary();
-}
-
-function setPercent(pct) {
-    const amount = state.cash * pct;
-    document.getElementById('trade-amount').value = amount.toFixed(2);
-    calculateSummary();
-}
-
-function calculateSummary() {
-    const amount = parseFloat(document.getElementById('trade-amount').value) || 0;
-    const fee = amount * 0.0005;
-    document.getElementById('est-fee').innerText = `$${fee.toFixed(2)}`;
-    document.getElementById('est-position').innerText = `$${(amount * leverage).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-}
-
-document.getElementById('trade-amount').addEventListener('input', calculateSummary);
-
-function executeTrade() {
-    if (!currentCoin) return;
-    const amount = parseFloat(document.getElementById('trade-amount').value);
-    if (isNaN(amount) || amount <= 0) {
-        alert('Please enter a valid investment amount.');
-        return;
-    }
-    if (amount > state.cash) {
-        alert('Insufficient simulated funds in your wallet.');
-        return;
-    }
-
-    state.cash -= amount;
-    const positionValue = amount * leverage;
-    const newPos = {
-        id: Math.random().toString(36).substring(2, 9),
-        coinId: currentCoin.id,
-        symbol: currentCoin.symbol.toUpperCase(),
-        name: currentCoin.name,
-        image: currentCoin.image,
-        type: orderType,
-        entryPrice: currentCoin.current_price,
-        amount: amount,
-        leverage: leverage,
-        positionValue: positionValue,
-        time: new Date().toLocaleTimeString()
-    };
-
-    state.positions.push(newPos);
-    state.history.unshift({
-        ...newPos,
-        action: `Opened ${orderType}`
-    });
-
-    saveAndRefresh();
-}
-
-function closePosition(id) {
-    const index = state.positions.findIndex(p => p.id === id);
-    if (index !== -1) {
-        const pos = state.positions[index];
-        const currentCoinObj = coinsData.find(c => c.id === pos.coinId) || pos;
-        const priceDiff = currentCoinObj.current_price - pos.entryPrice;
-        const percentageChange = (priceDiff / pos.entryPrice) * (pos.type === 'BUY' ? 1 : -1);
-        const pnl = pos.positionValue * percentageChange;
-        const returnAmount = pos.amount + pnl;
-
-        state.cash += Math.max(0, returnAmount);
-        state.history.unshift({
-            ...pos,
-            action: `Closed PnL: ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}`
-        });
-
-        state.positions.splice(index, 1);
-        saveAndRefresh();
-    }
-}
-
-function switchTab(tab) {
-    activeTab = tab;
-    const posBtn = document.getElementById('tab-btn-positions');
-    const histBtn = document.getElementById('tab-btn-history');
-    if (tab === 'positions') {
-        posBtn.className = 'py-2.5 mr-4 text-white border-b-2 border-accentYellow';
-        histBtn.className = 'py-2.5 text-gray-400 hover:text-white transition';
-    } else {
-        posBtn.className = 'py-2.5 mr-4 text-gray-400 hover:text-white transition';
-        histBtn.className = 'py-2.5 text-white border-b-2 border-accentYellow';
-    }
-    renderTabContent();
-}
-
-function renderTabContent() {
-    const content = document.getElementById('tab-content');
-    content.innerHTML = '';
-
-    if (activeTab === 'positions') {
-        if (state.positions.length === 0) {
-            content.innerHTML = `<div class="text-center text-gray-500 py-8 text-xs">No open positions. Start trading above!</div>`;
-            return;
-        }
-        const table = document.createElement('table');
-        table.className = 'w-full text-left text-xs';
-        table.innerHTML = `
-            <thead class="text-gray-400 border-b border-cardBorder">
-                <tr>
-                    <th class="pb-2">Asset</th>
-                    <th class="pb-2">Type</th>
-                    <th class="pb-2">Entry</th>
-                    <th class="pb-2">Size</th>
-                    <th class="pb-2">PnL (Est)</th>
-                    <th class="pb-2 text-right">Action</th>
-                </tr>
-            </thead>
-            <tbody class="divide-y divide-cardBorder/40" id="positions-rows"></tbody>
-        `;
-        content.appendChild(table);
-
-        const tbody = document.getElementById('positions-rows');
-        state.positions.forEach(pos => {
-            const cObj = coinsData.find(c => c.id === pos.coinId) || pos;
-            const diff = cObj.current_price - pos.entryPrice;
-            const pct = (diff / pos.entryPrice) * (pos.type === 'BUY' ? 1 : -1);
-            const pnl = pos.positionValue * pct;
-            const isGreen = pnl >= 0;
-
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td class="py-2 flex items-center space-x-1.5"><img src="${pos.image}" class="w-4 h-4 rounded-full"><span class="font-bold text-white uppercase">${pos.symbol}</span></td>
-                <td class="py-2 font-semibold ${pos.type === 'BUY' ? 'text-accentGreen' : 'text-accentRed'}">${pos.type} ${pos.leverage}x</td>
-                <td class="py-2 text-gray-300">$${pos.entryPrice.toLocaleString()}</td>
-                <td class="py-2 text-gray-300">$${pos.positionValue.toLocaleString()}</td>
-                <td class="py-2 font-bold ${isGreen ? 'text-accentGreen' : 'text-accentRed'}">${isGreen ? '+' : ''}$${pnl.toFixed(2)} (${(pct * pos.leverage * 100).toFixed(2)}%)</td>
-                <td class="py-2 text-right"><button onclick="closePosition('${pos.id}')" class="bg-cardBorder hover:bg-gray-700 text-white px-2 py-1 rounded">Close</button></td>
-            `;
-            tbody.appendChild(tr);
-        });
-    } else {
-        if (state.history.length === 0) {
-            content.innerHTML = `<div class="text-center text-gray-500 py-8 text-xs">No trade history yet.</div>`;
-            return;
-        }
-        const ul = document.createElement('div');
-        ul.className = 'space-y-2';
-        state.history.forEach(h => {
-            const item = document.createElement('div');
-            item.className = 'flex justify-between items-center bg-darkBg p-2 rounded border border-cardBorder';
-            item.innerHTML = `
-                <div class="flex items-center space-x-2">
-                    <span class="font-bold uppercase text-white">${h.symbol}</span>
-                    <span class="text-gray-400">${h.action} @ $${h.entryPrice.toLocaleString()}</span>
-                </div>
-                <div class="text-gray-400 text-[10px]">${h.time}</div>
-            `;
-            ul.appendChild(item);
-        });
-        content.appendChild(ul);
-    }
-}
-
-function updateUI() {
-    document.getElementById('cash-balance').innerText = `$${state.cash.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-    
-    let openPnlTotal = 0;
-    state.positions.forEach(pos => {
-        const cObj = coinsData.find(c => c.id === pos.coinId) || pos;
-        const diff = cObj.current_price - pos.entryPrice;
-        const pct = (diff / pos.entryPrice) * (pos.type === 'BUY' ? 1 : -1);
-        openPnlTotal += (pos.positionValue * pct);
-    });
-
-    const totalVal = state.cash + state.positions.reduce((acc, p) => acc + p.amount, 0) + openPnlTotal;
-    document.getElementById('header-total-val').innerText = `$${totalVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-    document.getElementById('open-count').innerText = state.positions.length;
-
-    renderTabContent();
-    renderHoldings();
-    calculateSummary();
-}
-
-function renderHoldings() {
-    const container = document.getElementById('portfolio-holdings');
-    container.innerHTML = '';
-    if (state.positions.length === 0) {
-        container.innerHTML = `<div class="text-gray-500 text-center py-2">No active assets</div>`;
-        return;
-    }
-    state.positions.forEach(p => {
-        const div = document.createElement('div');
-        div.className = 'flex justify-between items-center bg-darkBg p-2 rounded border border-cardBorder';
-        div.innerHTML = `
-            <div class="flex items-center space-x-1.5">
-                <img src="${p.image}" class="w-4 h-4 rounded-full">
-                <span class="font-bold text-white uppercase">${p.symbol}</span>
-            </div>
-            <span class="text-gray-300">$${p.positionValue.toLocaleString()}</span>
         `;
         container.appendChild(div);
     });
 }
 
-function saveAndRefresh() {
-    localStorage.setItem('nexusx_state', JSON.stringify(state));
-    updateUI();
+function loadAssetIntoTradePanel(asset) {
+    selectedAsset = asset;
+    document.getElementById('trade-asset-title').innerText = asset.name;
+    document.getElementById('trade-asset-symbol').innerText = `${asset.symbol} · ${asset.type.toUpperCase()}`;
+    document.getElementById('trade-asset-price').innerText = `$${asset.current_price.toLocaleString()}`;
+    const changeElem = document.getElementById('trade-asset-change');
+    const isPos = asset.price_change_percentage_24h >= 0;
+    changeElem.innerText = `${isPos ? '+' : ''}${asset.price_change_percentage_24h.toFixed(2)}%`;
+    changeElem.className = `text-xs font-semibold ${isPos ? 'text-rhGreen' : 'text-rhRed'}`;
+
+    // Load Chart Data
+    const sparkline = asset.sparkline_in_7d?.price || [asset.current_price * 0.95, asset.current_price];
+    let time = Math.floor(Date.now() / 1000) - (sparkline.length * 3600);
+    const chartData = sparkline.map(val => ({ time: time += 3600, value: val }));
+    lineSeries.setData(chartData);
+    chart.timeScale().fitContent();
+    calculateEstShares();
 }
 
-function openResetModal() {
-    document.getElementById('reset-modal').style.display = 'flex';
-}
-function closeResetModal() {
-    document.getElementById('reset-modal').style.display = 'none';
-}
-function confirmReset() {
-    const newBal = parseFloat(document.getElementById('new-balance-input').value);
-    if (!isNaN(newBal) && newBal > 0) {
-        state.cash = newBal;
-        state.initialCash = newBal;
-        state.positions = [];
-        state.history.unshift({ action: 'Wallet Reset', symbol: 'USD', entryPrice: newBal, time: new Date().toLocaleTimeString() });
-        saveAndRefresh();
-        closeResetModal();
+// --- TRADING ENGINE ---
+function setOrderMode(mode) {
+    orderMode = mode;
+    const buyBtn = document.getElementById('mode-buy');
+    const sellBtn = document.getElementById('mode-sell');
+    const subBtn = document.getElementById('order-submit-btn');
+
+    if (mode === 'BUY') {
+        buyBtn.className = 'py-2.5 rounded-xl bg-white text-black shadow-sm cursor-pointer transition';
+        sellBtn.className = 'py-2.5 rounded-xl text-gray-500 cursor-pointer transition';
+        subBtn.className = 'w-full bg-rhGreen text-white font-bold py-4 rounded-full hover:bg-rhGreenHover transition shadow-lg text-sm';
+        subBtn.innerText = `Buy ${selectedAsset ? selectedAsset.symbol : ''}`;
+    } else {
+        buyBtn.className = 'py-2.5 rounded-xl text-gray-500 cursor-pointer transition';
+        sellBtn.className = 'py-2.5 rounded-xl bg-white text-black shadow-sm cursor-pointer transition';
+        subBtn.className = 'w-full bg-rhRed text-white font-bold py-4 rounded-full hover:bg-red-600 transition shadow-lg text-sm';
+        subBtn.innerText = `Sell ${selectedAsset ? selectedAsset.symbol : ''}`;
     }
 }
 
-window.onload = () => {
-    initChart();
-    fetchMarkets();
-    setInterval(fetchMarkets, 15000);
-};
+function toggleOrderType() {
+    orderType = document.getElementById('order-type-select').value;
+    const limitContainer = document.getElementById('limit-price-container');
+    if (orderType === 'LIMIT' || orderType === 'STOP') {
+        limitContainer.classList.remove('hidden');
+        if (selectedAsset) document.getElementById('limit-price-input').value = selectedAsset.current_price;
+    } else {
+        limitContainer.classList.add('hidden');
+    }
+}
+
+document.getElementById('trade-amount').addEventListener('input', calculateEstShares);
+function calculateEstShares() {
+    const amount = parseFloat(document.getElementById('trade-amount').value) || 0;
+    if (!selectedAsset) return;
+    const shares = amount / selectedAsset.current_price;
+    document.getElementById('est-shares-calc').innerText = `${shares.toFixed(4)} shares`;
+}
+
+function executeOrder() {
+    if (!selectedAsset) return;
+    const amount = parseFloat(document.getElementById('trade-amount').value);
+    if (isNaN(amount) || amount <= 0) {
+        alert('Please enter a valid dollar amount.');
+        return;
+    }
+
+    const executionPrice = orderType === 'MARKET' ? selectedAsset.current_price : parseFloat(document.getElementById('limit-price-input').value);
+
+    if (orderMode === 'BUY') {
+        if (amount > accountState.cash) {
+            alert('Insufficient buying power.');
+            return;
+        }
+        accountState.cash -= amount;
+        const sharesBought = amount / executionPrice;
+
+        const existing = accountState.positions.find(p => p.id === selectedAsset.id);
+        if (existing) {
+            const totalShares = existing.shares + sharesBought;
+            existing.avgPrice = ((existing.shares * existing.avgPrice) + amount) / totalShares;
+            existing.shares = totalShares;
+        } else {
+            accountState.positions.push({
+                id: selectedAsset.id,
+                symbol: selectedAsset.symbol,
+                name: selectedAsset.name,
+                shares: sharesBought,
+                avgPrice: executionPrice,
+                type: selectedAsset.type,
+                image: selectedAsset.image
+            });
+        }
+    } else {
+        const existing = accountState.positions.find(p => p.id === selectedAsset.id);
+        if (!existing) {
+            alert('You do not own this position.');
+            return;
+        }
+        const sharesToSell = amount / executionPrice;
+        if (sharesToSell > existing.shares) {
+            alert('You cannot sell more shares than you own.');
+            return;
+        }
+        existing.shares -= sharesToSell;
+        accountState.cash += amount;
+
+        if (existing.shares <= 0.000001) {
+            accountState.positions = accountState.positions.filter(p => p.id !== selectedAsset.id);
+        }
+    }
+
+    accountState.history.unshift({
+        id: Math.random().toString(36).substring(2, 9),
+        type: `${orderMode} (${orderType})`,
+        symbol: selectedAsset.symbol,
+        shares: amount / executionPrice,
+        price: executionPrice,
+        total: amount,
+        time: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    });
+
+    saveAndRefresh();
+    alert(`Successfully executed ${orderMode} order for ${selectedAsset.symbol}!`);
+}
+
+// --- OPTIONS CHAIN ---
+function loadOptionsChain() {
+    const assetSymbol = document.getElementById('options-asset-select').value;
+    const asset = marketAssets.find(a => a.symbol === assetSymbol) || { current_price: 200 };
+    const basePrice = asset.current_price;
+
+    const callsBody = document.getElementById('calls-table-body');
+    const putsBody = document.getElementById('puts-table-body');
+    callsBody.innerHTML = '';
+    putsBody.innerHTML = '';
+
+    for (let i = -3; i <= 3; i++) {
+        const strike = Math.round(basePrice + (i * 5));
+        const callBid = (Math.max(1, (basePrice - strike) + (Math.random() * 5))).toFixed(2);
+        const callAsk = (parseFloat(callBid) + 0.35).toFixed(2);
+        const putBid = (Math.max(1, (strike - basePrice) + (Math.random() * 5))).toFixed(2);
+        const putAsk = (parseFloat(putBid) + 0.35).toFixed(2);
+
+        // Calls Row
+        const trC = document.createElement('tr');
+        trC.innerHTML = `
+            <td class="py-3 font-bold text-black">$${strike}</td>
+            <td class="py-3 text-gray-600">$${callBid}</td>
+            <td class="py-3 text-black font-semibold">$${callAsk}</td>
+            <td class="py-3 text-gray-400">34.2%</td>
+            <td class="py-3 text-right"><button onclick="tradeOption('CALL', ${strike}, ${callAsk})" class="bg-rhGreen/10 text-rhGreen hover:bg-rhGreen hover:text-white px-3 py-1 rounded-full font-bold transition">Buy Call</button></td>
+        `;
+        callsBody.appendChild(trC);
+
+        // Puts Row
+        const trP = document.createElement('tr');
+        trP.innerHTML = `
+            <td class="py-3 font-bold text-black">$${strike}</td>
+            <td class="py-3 text-gray-600">$${putBid}</td>
+            <td class="py-3 text-black font-semibold">$${putAsk}</td>
+            <td class="py-3 text-gray-400">38.9%</td>
+            <td class="py-3 text-right"><button onclick="tradeOption('PUT', ${strike}, ${putAsk})" class="bg-rhRed/10 text-rhRed hover:bg-rhRed hover:text-white px-3 py-1 rounded-full font-bold transition">Buy Put</button></td>
+        `;
+        putsBody.appendChild(trP);
+    }
+}
+
+function tradeOption(type, strike, askPrice) {
+    const cost = askPrice * 100; // Options contracts represent 100 shares
+    if (cost > accountState.cash) {
+        alert('Insufficient buying power for options contract.');
+        return;
+    }
+    accountState.cash -= cost;
+    accountState.history.unshift({
+        id: Math.random().toString(36).substring(2, 9),
+        type: `OPTIONS ${type}`,
+        symbol: `${document.getElementById('options-asset-select').value} $${strike}`,
+        shares: 1,
+        price: askPrice,
+        total: cost,
+        time: new Date().toLocaleDateString()
+    });
+    saveAndRefresh();
+    alert(`Successfully purchased 1 ${type} contract at $${strike} strike!`);
+}
+
+// --- CRYPTO HUB & LEDGER RENDERERS ---
+function renderCryptoHub() {
+    const grid = document.getElementById('crypto-market-grid');
+    grid.innerHTML = '';
+    marketAssets.filter(a => a.type === 'crypto').forEach(crypto => {
+        const isPos = crypto.price_change_percentage_24h >= 0;
+        const card = document.createElement('div');
+        card.className = 'border border-rhBorder rounded-2xl p-4 flex items-center justify-between hover:border-black cursor-pointer transition';
+        card.onclick = () => { loadAssetIntoTradePanel(crypto); switchView('portfolio'); };
+        card.innerHTML = `
+            <div class="flex items-center space-x-3">
+                <img src="${crypto.image}" class="w-10 h-10 rounded-full">
+                <div><div class="font-bold text-sm text-black">${crypto.name}</div><div class="text-xs uppercase text-gray-400">${crypto.symbol}</div></div>
+            </div>
+            <div class="text-right">
+                <div class="font-bold text-sm text-black">$${crypto.current_price.toLocaleString()}</div>
+                <div class="text-xs font-semibold ${isPos ? 'text-rhGreen' : 'text-rhRed'}">${isPos ? '+' : ''}${crypto.price_change_percentage_24h.toFixed(2)}%</div>
+            </div>
+        `;
+        grid.appendChild(card);
+    });
+}
+
+function renderHistoryLedger() {
+    const ledger = document.getElementById('history-ledger-list');
+    ledger.innerHTML = '';
+    if (accountState.history.length === 0) {
+        ledger.innerHTML = `<div class="text-center text-gray-400 py-6 text-sm">No recorded transactions yet.</div>`;
+        return;
+    }
+    accountState.history.forEach(h => {
+        const item = document.createElement('div');
+        item.className = 'flex items-center justify-between py-3';
+        item.innerHTML = `
+            <div><div class="font-bold text-sm text-black">${h.type} — ${h.symbol}</div><div class="text-xs text-gray-400">${h.time}</div></div>
+            <div class="text-right"><div class="font-bold text-sm text-black">$${h.total.toLocaleString(undefined, {minimumFractionDigits: 2})}</div><div class="text-xs text-gray-500">${h.shares.toFixed(3)} units @ $${h.price}</div></div>
+        `;
+        ledger.appendChild(item);
+    });
+}
+
+// --- UI REFRESH & STATE PERSISTENCE ---
+function updateUI() {
+    document.getElementById('cash-balance').innerText = `$${accountState.cash.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+    let portfolioVal = accountState.cash;
+    const posList = document.getElementById('positions-list');
+    posList.innerHTML = '';
+
+    if (accountState.positions.length === 0) {
+        posList.innerHTML = `<div class="text-gray-400 text-sm py-4 text-center">No open positions. Start investing!</div>`;
+    } else {
+        accountState.positions.forEach(pos => {
+            const live = marketAssets.find(a => a.id === pos.id) || pos;
+            const currentVal = pos.shares * live.current_price;
+            portfolioVal += currentVal;
+            const pnl = currentVal - (pos.shares * pos.avgPrice);
+            const isGreen = pnl >= 0;
+
+            const div = document.createElement('div');
+            div.className = 'flex items-center justify-between py-3';
+            div.innerHTML = `
+                <div class="flex items-center space-x-3">
+                    <img src="${pos.image}" class="w-8 h-8 rounded-full">
+                    <div><div class="font-bold text-sm uppercase text-black">${pos.symbol}</div><div class="text-xs text-gray-500">${pos.shares.toFixed(4)} shares</div></div>
+                </div>
+                <div class="text-right">
+                    <div class="font-bold text-sm text-black">$${currentVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
+                    <div class="text-xs font-semibold ${isGreen ? 'text-rhGreen' : 'text-rhRed'}">${isGreen ? '+' : ''}$${pnl.toFixed(2)}</div>
+                </div>
+            `;
+            posList.appendChild(div);
+        });
+    }
+
+    document.getElementById('main-portfolio-val').innerText = `$${portfolioVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    document.getElementById('header-portfolio-val').innerText = `$${portfolioVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+
+    renderHistoryLedger();
+}
+
+function saveAndRefresh() {
+    localStorage.setItem('robinhood_ultimate_state', JSON.stringify(accountState));
+    updateUI();
+}
+
+// --- MODALS & EXPORTS ---
+let modalMode = 'deposit';
+function openDepositModal() {
+    modalMode = 'deposit';
+    document.getElementById('modal-title').innerText = 'Deposit Cash';
+    document.getElementById('modal-overlay').style.display = 'flex';
+}
+function openAccountModal() {
+    modalMode = 'account';
+    document.getElementById('modal-title').innerText = 'Reset Account Balance';
+    document.getElementById('modal-overlay').style.display = 'flex';
+}
+function closeModal() {
+    document.getElementById('modal-overlay').style.display = 'none';
+}
+function confirmModalAction() {
+    const val = parseFloat(document.getElementById('modal-input').value);
+    if (!isNaN(val) && val > 0) {
+        if (modalMode === 'deposit') {
+            accountState.cash += val;
+            accountState.history.unshift({ id: 'dep', type: 'DEPOSIT', symbol: 'USD', shares: val, price: 1, total: val, time: new Date().toLocaleDateString() });
+        } else {
+            accountState.cash = val;
+            accountState.positions = [];
+            accountState.history = [];
+        }
+        saveAndRefresh();
+        closeModal();
+    }
+}
+
+function exportAccountStatement() {
+    let csv = 'ID,Type,Symbol,Shares,Price,Total,Timestamp\n';
+    accountState.history.forEach(h => {
+        csv += `${h.id},${h.type},${h.symbol},${h.shares},${h.price},${h.total},${h.time}\n`;
+    });
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Robinhood_Account_Statement.csv';
+    a.click();
+}
