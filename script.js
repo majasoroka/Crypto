@@ -49,9 +49,11 @@ function formatPct(n) {
 function init() {
   portfolio = loadPortfolio();
   if (!portfolio) {
-    onboardingModal.style.display = 'flex';
+    document.getElementById('onboarding-modal').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
   } else {
-    onboardingModal.style.display = 'none';
+    document.getElementById('onboarding-modal').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
     startApp();
   }
 }
@@ -63,7 +65,8 @@ startBtn.addEventListener('click', () => {
     return;
   }
   portfolio = createPortfolio(cash);
-  onboardingModal.style.display = 'none';
+  document.getElementById('onboarding-modal').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
   startApp();
 });
 

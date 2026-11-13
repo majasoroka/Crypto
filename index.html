@@ -9,13 +9,13 @@
 </head>
 <body>
   <!-- Onboarding Modal -->
-  <div id="onboarding-modal" class="modal-overlay">
+  <div id="onboarding-modal" class="modal-overlay" style="display:flex;">
     <div class="modal">
       <h2>Start Investing</h2>
-      <p style="color:var(--muted);margin-bottom:8px;">This is a realistic paper trading simulator using live market data. Your money is not real.</p>
-      <label>Starting Buying Power (USD)</label>
-      <input type="number" id="starting-cash" value="10000" min="100" step="100">
-      <button id="start-btn" class="btn btn-buy">Get Started</button>
+      <p style="color:#5C6166;margin-bottom:8px;">This is a realistic paper trading simulator using live market data. Your money is not real.</p>
+      <label style="display:block;margin:12px 0 4px;font-size:14px;">Starting Buying Power (USD)</label>
+      <input type="number" id="starting-cash" value="10000" min="100" step="100" style="width:100%;padding:12px;font-size:16px;border:1px solid #E0E0E0;border-radius:8px;">
+      <button id="start-btn" class="btn btn-buy" style="width:100%;margin-top:16px;padding:14px;background:#00C805;color:#0E0E0E;border:none;border-radius:999px;font-weight:700;font-size:16px;cursor:pointer;">Get Started</button>
     </div>
   </div>
 
@@ -32,74 +32,77 @@
     </div>
   </div>
 
-  <header class="header">
-    <div class="logo">
-      <div class="logo-icon">🪶</div>
-      Robinhood
-    </div>
-    <div class="search-bar">
-      <span class="search-icon">🔍</span>
-      <input type="text" id="search-input" placeholder="Search stocks, crypto, ETFs...">
-    </div>
-    <div class="buying-power" id="buying-power">Buying Power <span>$0.00</span></div>
-  </header>
+  <!-- Main app (hidden until started) -->
+  <div id="app" style="display:none;">
+    <header class="header">
+      <div class="logo">
+        <div class="logo-icon">🪶</div>
+        Robinhood
+      </div>
+      <div class="search-bar">
+        <span class="search-icon">🔍</span>
+        <input type="text" id="search-input" placeholder="Search stocks, crypto, ETFs...">
+      </div>
+      <div class="buying-power" id="buying-power">Buying Power <span>$0.00</span></div>
+    </header>
 
-  <main class="main">
-    <div class="left-panel">
-      <!-- Portfolio View -->
-      <div id="portfolio-view">
-        <div class="portfolio-hero">
-          <div class="portfolio-value" id="portfolio-value">$0.00</div>
-          <div class="portfolio-change" id="portfolio-change">+$0.00 (0.00%) Today</div>
-          <div class="timeframes">
-            <button class="timeframe-btn active">1D</button>
-            <button class="timeframe-btn">1W</button>
-            <button class="timeframe-btn">1M</button>
-            <button class="timeframe-btn">3M</button>
-            <button class="timeframe-btn">1Y</button>
-            <button class="timeframe-btn">ALL</button>
+    <main class="main">
+      <div class="left-panel">
+        <!-- Portfolio View -->
+        <div id="portfolio-view">
+          <div class="portfolio-hero">
+            <div class="portfolio-value" id="portfolio-value">$0.00</div>
+            <div class="portfolio-change" id="portfolio-change">+$0.00 (0.00%) Today</div>
+            <div class="timeframes">
+              <button class="timeframe-btn active">1D</button>
+              <button class="timeframe-btn">1W</button>
+              <button class="timeframe-btn">1M</button>
+              <button class="timeframe-btn">3M</button>
+              <button class="timeframe-btn">1Y</button>
+              <button class="timeframe-btn">ALL</button>
+            </div>
+          </div>
+          <div class="chart-container">
+            <div id="portfolio-chart"></div>
+          </div>
+          <div class="positions">
+            <h3>Positions</h3>
+            <div id="positions-list"></div>
           </div>
         </div>
-        <div class="chart-container">
-          <div id="portfolio-chart"></div>
-        </div>
-        <div class="positions">
-          <h3>Positions</h3>
-          <div id="positions-list"></div>
-        </div>
-      </div>
 
-      <!-- Asset Detail View -->
-      <div id="asset-detail" class="asset-detail">
-        <button id="back-btn" class="btn btn-secondary" style="margin-bottom:16px;">← Back</button>
-        <div class="asset-header">
-          <div>
-            <div id="asset-name" style="font-size:20px;font-weight:700;"></div>
-            <div class="asset-price-large" id="asset-price">$0.00</div>
-            <div id="asset-change" class="portfolio-change">+0.00%</div>
+        <!-- Asset Detail View -->
+        <div id="asset-detail" class="asset-detail" style="display:none;">
+          <button id="back-btn" class="btn btn-secondary" style="margin-bottom:16px;">← Back</button>
+          <div class="asset-header">
+            <div>
+              <div id="asset-name" style="font-size:20px;font-weight:700;"></div>
+              <div class="asset-price-large" id="asset-price">$0.00</div>
+              <div id="asset-change" class="portfolio-change">+0.00%</div>
+            </div>
+          </div>
+          <div class="chart-container">
+            <div id="asset-chart"></div>
+          </div>
+          <div class="buy-sell-buttons">
+            <button id="buy-btn" class="btn btn-buy">Buy</button>
+            <button id="sell-btn" class="btn btn-sell">Sell</button>
           </div>
         </div>
-        <div class="chart-container">
-          <div id="asset-chart"></div>
-        </div>
-        <div class="buy-sell-buttons">
-          <button id="buy-btn" class="btn btn-buy">Buy</button>
-          <button id="sell-btn" class="btn btn-sell">Sell</button>
-        </div>
       </div>
-    </div>
 
-    <div class="right-panel">
-      <div class="sidebar-card">
-        <h3>Popular</h3>
-        <div id="popular-list"></div>
+      <div class="right-panel">
+        <div class="sidebar-card">
+          <h3>Popular</h3>
+          <div id="popular-list"></div>
+        </div>
+        <div class="sidebar-card">
+          <h3>Account</h3>
+          <p style="font-size:14px;color:var(--muted);">Paper trading account<br>All trades are simulated with real market prices.</p>
+        </div>
       </div>
-      <div class="sidebar-card">
-        <h3>Account</h3>
-        <p style="font-size:14px;color:var(--muted);">Paper trading account<br>All trades are simulated with real market prices.</p>
-      </div>
-    </div>
-  </main>
+    </main>
+  </div>
 
   <!-- Lightweight Charts CDN -->
   <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
