@@ -1,287 +1,108 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Investing · Robinhood Financial LLC</title>
-    <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome Pro / Free Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- TradingView Lightweight Charts -->
-    <script src="https://unpkg.com/lightweight-charts/dist/standalone.development.js"></script>
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        rhGreen: '#00c805',
-                        rhGreenHover: '#00b004',
-                        rhRed: '#ff5000',
-                        rhDark: '#1e222d',
-                        rhGray: '#f4f6f8',
-                        rhBorder: '#e8ebef',
-                        rhSubtle: '#6b7280'
-                    }
-                }
-            }
-        }
-    </script>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Robinhood | Paper Trading</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
 </head>
-<body class="bg-white text-rhDark min-h-screen flex flex-col select-none antialiased">
+<body>
+  <!-- Onboarding Modal -->
+  <div id="onboarding-modal" class="modal-overlay">
+    <div class="modal">
+      <h2>Start Investing</h2>
+      <p style="color:var(--muted);margin-bottom:8px;">This is a realistic paper trading simulator using live market data. Your money is not real.</p>
+      <label>Starting Buying Power (USD)</label>
+      <input type="number" id="starting-cash" value="10000" min="100" step="100">
+      <button id="start-btn" class="btn btn-buy">Get Started</button>
+    </div>
+  </div>
 
-    <!-- TOP NAVIGATION BAR -->
-    <header class="border-b border-rhBorder h-16 px-6 lg:px-12 flex items-center justify-between sticky top-0 bg-white z-50">
-        <div class="flex items-center space-x-8 lg:space-x-12">
-            <!-- Robinhood Logo -->
-            <div onclick="switchView('portfolio')" class="flex items-center space-x-2.5 cursor-pointer">
-                <svg viewBox="0 0 400 400" class="w-8 h-8 text-rhGreen fill-current"><path d="M200 0C89.5 0 0 89.5 0 200s89.5 200 200 200 200-89.5 200-200S310.5 0 200 0zm0 360c-88.4 0-160-71.6-160-160S111.6 40 200 40s160 71.6 160 160-71.6 160-160 160zm40-220c-33.1 0-60 26.9-60 60 0 16.6 6.7 31.7 17.6 42.4l-70.7 70.7 28.3 28.3 70.7-70.7c10.7 10.9 25.8 17.6 42.4 17.6 33.1 0 60-26.9 60-60s-26.9-60-60-60zm0 80c-11 0-20-9-20-20s9-20 20-20 20 9 20 20-9 20-20 20z"/></svg>
-                <span class="font-bold text-xl tracking-tight hidden sm:inline">Robinhood</span>
-            </div>
-            <!-- Global Search -->
-            <div class="relative w-64 lg:w-96">
-                <i class="fa-solid fa-search absolute left-3.5 top-3 text-gray-400 text-sm"></i>
-                <input type="text" id="global-search" placeholder="Search stocks, crypto, options..." class="w-full bg-rhGray border border-transparent rounded-full py-2 pl-10 pr-4 text-sm focus:outline-none focus:border-gray-400 focus:bg-white transition">
-                <div id="search-dropdown" class="absolute left-0 right-0 mt-2 bg-white border border-rhBorder rounded-2xl shadow-xl hidden z-50 max-h-80 overflow-y-auto divide-y divide-rhBorder"></div>
-            </div>
+  <!-- Trade Modal -->
+  <div id="trade-modal" class="modal-overlay" style="display:none;">
+    <div class="modal">
+      <h2 id="trade-title">Buy</h2>
+      <div class="trade-form">
+        <label>Quantity</label>
+        <input type="number" id="trade-qty" value="1" min="0.0001" step="0.0001">
+      </div>
+      <button id="trade-confirm" class="btn btn-buy">Confirm</button>
+      <button id="trade-cancel" class="btn btn-secondary" style="margin-top:8px;">Cancel</button>
+    </div>
+  </div>
+
+  <header class="header">
+    <div class="logo">
+      <div class="logo-icon">🪶</div>
+      Robinhood
+    </div>
+    <div class="search-bar">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search-input" placeholder="Search stocks, crypto, ETFs...">
+    </div>
+    <div class="buying-power" id="buying-power">Buying Power <span>$0.00</span></div>
+  </header>
+
+  <main class="main">
+    <div class="left-panel">
+      <!-- Portfolio View -->
+      <div id="portfolio-view">
+        <div class="portfolio-hero">
+          <div class="portfolio-value" id="portfolio-value">$0.00</div>
+          <div class="portfolio-change" id="portfolio-change">+$0.00 (0.00%) Today</div>
+          <div class="timeframes">
+            <button class="timeframe-btn active">1D</button>
+            <button class="timeframe-btn">1W</button>
+            <button class="timeframe-btn">1M</button>
+            <button class="timeframe-btn">3M</button>
+            <button class="timeframe-btn">1Y</button>
+            <button class="timeframe-btn">ALL</button>
+          </div>
         </div>
-
-        <nav class="flex items-center space-x-6 lg:space-x-8 text-sm font-semibold">
-            <button onclick="switchView('portfolio')" id="nav-btn-portfolio" class="text-black border-b-2 border-black py-5 transition">Investing</button>
-            <button onclick="switchView('crypto')" id="nav-btn-crypto" class="text-gray-500 hover:text-black py-5 transition">Crypto</button>
-            <button onclick="switchView('options')" id="nav-btn-options" class="text-gray-500 hover:text-black py-5 transition">Options</button>
-            <button onclick="switchView('history')" id="nav-btn-history" class="text-gray-500 hover:text-black py-5 transition">History & Statements</button>
-            
-            <div class="flex items-center space-x-3 pl-4 border-l border-rhBorder">
-                <div class="text-right hidden sm:block">
-                    <div class="text-[10px] text-gray-400 uppercase font-normal tracking-wider">Portfolio Value</div>
-                    <div id="header-portfolio-val" class="text-sm font-bold text-black">$10,000.00</div>
-                </div>
-                <button onclick="openAccountModal()" class="w-9 h-9 rounded-full bg-rhGray hover:bg-gray-200 flex items-center justify-center text-gray-700 transition" title="Account Settings">
-                    <i class="fa-solid fa-user text-xs"></i>
-                </button>
-            </div>
-        </nav>
-    </header>
-
-    <!-- APP VIEWS CONTAINER -->
-    <div class="flex-1 flex flex-col">
-
-        <!-- VIEW 1: PORTFOLIO / INVESTING DASHBOARD -->
-        <div id="view-portfolio" class="flex-1 max-w-7xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8 px-6 lg:px-12 py-8">
-            <div class="lg:col-span-8 space-y-6">
-                <div>
-                    <h1 id="main-portfolio-val" class="text-4xl lg:text-5xl font-bold tracking-tight text-black">$10,000.00</h1>
-                    <div class="flex items-center space-x-2 mt-2">
-                        <span id="portfolio-change" class="text-sm font-semibold text-rhGreen">+$0.00 (+0.00%)</span>
-                        <span id="portfolio-timeframe-label" class="text-sm text-gray-400">Today</span>
-                    </div>
-                </div>
-
-                <!-- Interactive Chart Box -->
-                <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm space-y-4">
-                    <div class="flex items-center justify-between">
-                        <div id="chart-main-title" class="font-bold text-lg text-black">Net Account Equity</div>
-                        <div class="flex space-x-1.5 text-xs font-bold bg-rhGray p-1 rounded-full">
-                            <button onclick="setPortfolioTimeframe('1D')" class="pf-time-btn px-3 py-1.5 rounded-full bg-white text-black shadow-sm">1D</button>
-                            <button onclick="setPortfolioTimeframe('1W')" class="pf-time-btn px-3 py-1.5 rounded-full text-gray-500 hover:text-black">1W</button>
-                            <button onclick="setPortfolioTimeframe('1M')" class="pf-time-btn px-3 py-1.5 rounded-full text-gray-500 hover:text-black">1M</button>
-                            <button onclick="setPortfolioTimeframe('3M')" class="pf-time-btn px-3 py-1.5 rounded-full text-gray-500 hover:text-black">3M</button>
-                            <button onclick="setPortfolioTimeframe('1Y')" class="pf-time-btn px-3 py-1.5 rounded-full text-gray-500 hover:text-black">1Y</button>
-                            <button onclick="setPortfolioTimeframe('ALL')" class="pf-time-btn px-3 py-1.5 rounded-full text-gray-500 hover:text-black">ALL</button>
-                        </div>
-                    </div>
-                    <div id="chart-container" class="w-full h-80 lg:h-96"></div>
-                </div>
-
-                <!-- Holdings & Buying Power Grid -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm flex flex-col">
-                        <h2 class="font-bold text-lg mb-4 text-black">Positions & Holdings</h2>
-                        <div id="positions-list" class="flex-1 overflow-y-auto space-y-3 divide-y divide-rhBorder max-h-72"></div>
-                    </div>
-
-                    <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm flex flex-col justify-between">
-                        <div>
-                            <h2 class="font-bold text-lg mb-1 text-black">Buying Power</h2>
-                            <p class="text-xs text-gray-500 mb-4">Cash available for instant trading across stocks, options & crypto.</p>
-                            <div class="text-3xl font-bold text-black mb-6" id="cash-balance">$10,000.00</div>
-                            <div class="space-y-2 text-xs text-gray-600 bg-rhGray p-4 rounded-2xl">
-                                <div class="flex justify-between"><span>Unsettled Deposits:</span><span class="font-semibold text-black">$0.00</span></div>
-                                <div class="flex justify-between"><span>Instant Deposit Limit:</span><span class="font-semibold text-black">$25,000.00</span></div>
-                                <div class="flex justify-between"><span>Margin Interest Rate:</span><span class="font-semibold text-black">5.7% APY</span></div>
-                            </div>
-                        </div>
-                        <div class="flex space-x-3 mt-6">
-                            <button onclick="openDepositModal()" class="flex-1 bg-rhGreen text-white font-bold py-3.5 rounded-full hover:bg-rhGreenHover transition shadow-md">Deposit Funds</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Right Sidebar: Watchlist & Quick Trade -->
-            <div class="lg:col-span-4 space-y-6">
-                <!-- Trade Execution Widget -->
-                <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm space-y-5">
-                    <div class="flex items-center justify-between border-b border-rhBorder pb-3">
-                        <div>
-                            <div id="trade-asset-title" class="font-bold text-base text-black">Apple Inc.</div>
-                            <div id="trade-asset-symbol" class="text-xs font-semibold text-gray-400 uppercase">AAPL · Stock</div>
-                        </div>
-                        <div class="text-right">
-                            <div id="trade-asset-price" class="font-bold text-base text-black">$226.50</div>
-                            <div id="trade-asset-change" class="text-xs font-semibold text-rhGreen">+1.45%</div>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-2 gap-2 bg-rhGray p-1 rounded-2xl text-xs font-bold text-center">
-                        <div onclick="setOrderMode('BUY')" id="mode-buy" class="py-2.5 rounded-xl bg-white text-black shadow-sm cursor-pointer transition">Buy</div>
-                        <div onclick="setOrderMode('SELL')" id="mode-sell" class="py-2.5 rounded-xl text-gray-500 cursor-pointer transition">Sell</div>
-                    </div>
-
-                    <div class="space-y-3">
-                        <div class="flex justify-between text-xs text-gray-500">
-                            <span>Order Type</span>
-                            <select id="order-type-select" onchange="toggleOrderType()" class="bg-rhGray font-semibold text-black rounded px-2 py-1 focus:outline-none">
-                                <option value="MARKET">Market Order</option>
-                                <option value="LIMIT">Limit Order</option>
-                                <option value="STOP">Stop Loss</option>
-                            </select>
-                        </div>
-                        <div id="limit-price-container" class="hidden space-y-1">
-                            <label class="text-[11px] text-gray-400">Limit Price (USD)</label>
-                            <input type="number" id="limit-price-input" placeholder="0.00" class="w-full bg-rhGray border border-transparent rounded-xl py-2.5 px-3 text-sm font-bold text-black focus:outline-none focus:border-black">
-                        </div>
-                        <div class="flex justify-between text-xs text-gray-500">
-                            <span>Invest In</span>
-                            <span class="font-semibold text-black">USD Dollars</span>
-                        </div>
-                        <div class="relative">
-                            <span class="absolute left-4 top-3 text-lg font-bold text-black">$</span>
-                            <input type="number" id="trade-amount" value="100" class="w-full bg-rhGray border border-transparent rounded-2xl py-3.5 pl-9 pr-4 text-xl font-bold text-black focus:outline-none focus:border-black transition">
-                        </div>
-                        <div class="flex justify-between text-xs text-gray-400 px-1">
-                            <span>Est. Shares:</span>
-                            <span id="est-shares-calc" class="font-semibold text-black">0.4419 shares</span>
-                        </div>
-                    </div>
-
-                    <button onclick="executeOrder()" id="order-submit-btn" class="w-full bg-rhGreen text-white font-bold py-4 rounded-full hover:bg-rhGreenHover transition shadow-lg text-sm">
-                        Submit Order
-                    </button>
-                </div>
-
-                <!-- Market Watchlist -->
-                <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm space-y-4">
-                    <div class="flex items-center justify-between">
-                        <h2 class="font-bold text-lg text-black">Market Watchlist</h2>
-                        <span class="text-xs text-gray-400 font-semibold uppercase">Top Assets</span>
-                    </div>
-                    <div id="watchlist-container" class="space-y-2 max-h-96 overflow-y-auto divide-y divide-rhBorder"></div>
-                </div>
-            </div>
+        <div class="chart-container">
+          <div id="portfolio-chart"></div>
         </div>
-
-        <!-- VIEW 2: CRYPTO HUB -->
-        <div id="view-crypto" class="flex-1 max-w-7xl w-full mx-auto hidden grid-cols-1 lg:grid-cols-12 gap-8 px-6 lg:px-12 py-8">
-            <div class="lg:col-span-8 space-y-6">
-                <div>
-                    <h1 class="text-4xl font-bold tracking-tight text-black">Crypto Exchange</h1>
-                    <p class="text-sm text-gray-500 mt-1">Trade Bitcoin, Ethereum, Solana, and 20+ digital currencies 24/7 with zero commission.</p>
-                </div>
-                <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm space-y-4">
-                    <h2 class="font-bold text-lg text-black">Cryptocurrency Market Trends</h2>
-                    <div id="crypto-market-grid" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
-                </div>
-            </div>
-            <div class="lg:col-span-4 space-y-6">
-                <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm space-y-4">
-                    <h2 class="font-bold text-lg text-black">Crypto Portfolio Allocation</h2>
-                    <div id="crypto-holdings-breakdown" class="space-y-3"></div>
-                </div>
-            </div>
+        <div class="positions">
+          <h3>Positions</h3>
+          <div id="positions-list"></div>
         </div>
+      </div>
 
-        <!-- VIEW 3: OPTIONS TRADING CHAIN -->
-        <div id="view-options" class="flex-1 max-w-7xl w-full mx-auto hidden px-6 lg:px-12 py-8 space-y-6">
-            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                    <h1 class="text-4xl font-bold tracking-tight text-black">Options Chain Simulator</h1>
-                    <p class="text-sm text-gray-500 mt-1">Trade Calls & Puts with real-time implied volatility and strike pricing.</p>
-                </div>
-                <div class="flex items-center space-x-3">
-                    <select id="options-asset-select" onchange="loadOptionsChain()" class="bg-rhGray font-bold text-black border border-rhBorder rounded-2xl px-4 py-2.5 focus:outline-none">
-                        <option value="AAPL">Apple (AAPL)</option>
-                        <option value="TSLA">Tesla (TSLA)</option>
-                        <option value="NVDA">NVIDIA (NVDA)</option>
-                    </select>
-                    <select id="options-expiry-select" class="bg-rhGray font-bold text-black border border-rhBorder rounded-2xl px-4 py-2.5 focus:outline-none">
-                        <option value="2026-12-18">Dec 18, 2026</option>
-                        <option value="2027-01-15">Jan 15, 2027</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                <!-- Calls Table -->
-                <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm space-y-4">
-                    <div class="flex justify-between items-center"><h3 class="font-bold text-lg text-rhGreen">CALLS</h3><span class="text-xs text-gray-400">Bullish Contracts</span></div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-xs">
-                            <thead class="text-gray-400 border-b border-rhBorder">
-                                <tr><th class="pb-3">Strike</th><th class="pb-3">Bid</th><th class="pb-3">Ask</th><th class="pb-3">IV</th><th class="pb-3 text-right">Action</th></tr>
-                            </thead>
-                            <tbody id="calls-table-body" class="divide-y divide-rhBorder"></tbody>
-                        </table>
-                    </div>
-                </div>
-                <!-- Puts Table -->
-                <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm space-y-4">
-                    <div class="flex justify-between items-center"><h3 class="font-bold text-lg text-rhRed">PUTS</h3><span class="text-xs text-gray-400">Bearish Contracts</span></div>
-                    <div class="overflow-x-auto">
-                        <table class="w-full text-left text-xs">
-                            <thead class="text-gray-400 border-b border-rhBorder">
-                                <tr><th class="pb-3">Strike</th><th class="pb-3">Bid</th><th class="pb-3">Ask</th><th class="pb-3">IV</th><th class="pb-3 text-right">Action</th></tr>
-                            </thead>
-                            <tbody id="puts-table-body" class="divide-y divide-rhBorder"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
+      <!-- Asset Detail View -->
+      <div id="asset-detail" class="asset-detail">
+        <button id="back-btn" class="btn btn-secondary" style="margin-bottom:16px;">← Back</button>
+        <div class="asset-header">
+          <div>
+            <div id="asset-name" style="font-size:20px;font-weight:700;"></div>
+            <div class="asset-price-large" id="asset-price">$0.00</div>
+            <div id="asset-change" class="portfolio-change">+0.00%</div>
+          </div>
         </div>
-
-        <!-- VIEW 4: HISTORY & STATEMENTS -->
-        <div id="view-history" class="flex-1 max-w-7xl w-full mx-auto hidden px-6 lg:px-12 py-8 space-y-6">
-            <div class="flex justify-between items-center">
-                <div>
-                    <h1 class="text-4xl font-bold tracking-tight text-black">Account History & Ledger</h1>
-                    <p class="text-sm text-gray-500 mt-1">Complete record of all orders, dividends, deposits, and transfers.</p>
-                </div>
-                <button onclick="exportAccountStatement()" class="bg-rhGray hover:bg-gray-200 text-black font-bold px-5 py-2.5 rounded-full text-xs transition">
-                    <i class="fa-solid fa-download mr-2"></i> Export Statement (CSV)
-                </button>
-            </div>
-            <div class="border border-rhBorder rounded-3xl p-6 bg-white shadow-sm">
-                <div id="history-ledger-list" class="space-y-3 divide-y divide-rhBorder"></div>
-            </div>
+        <div class="chart-container">
+          <div id="asset-chart"></div>
         </div>
+        <div class="buy-sell-buttons">
+          <button id="buy-btn" class="btn btn-buy">Buy</button>
+          <button id="sell-btn" class="btn btn-sell">Sell</button>
+        </div>
+      </div>
     </div>
 
-    <!-- MODALS (Deposit & Account Settings) -->
-    <div id="modal-overlay" class="fixed inset-0 bg-black/60 hidden items-center justify-center z-50 p-4">
-        <div class="bg-white rounded-3xl p-8 w-full max-w-md space-y-6 shadow-2xl">
-            <h3 id="modal-title" class="text-2xl font-bold text-black">Deposit Funds</h3>
-            <p id="modal-desc" class="text-xs text-gray-500">Transfer instant funds from your linked bank account.</p>
-            <input type="number" id="modal-input" value="5000" class="w-full bg-rhGray border border-transparent rounded-2xl p-4 text-xl font-bold text-black focus:outline-none focus:border-black">
-            <div class="flex space-x-3">
-                <button onclick="confirmModalAction()" class="flex-1 bg-rhGreen text-white font-bold py-3.5 rounded-full hover:bg-rhGreenHover transition shadow-md">Confirm Transfer</button>
-                <button onclick="closeModal()" class="flex-1 bg-rhGray text-gray-700 font-bold py-3.5 rounded-full hover:bg-gray-200 transition">Cancel</button>
-            </div>
-        </div>
+    <div class="right-panel">
+      <div class="sidebar-card">
+        <h3>Popular</h3>
+        <div id="popular-list"></div>
+      </div>
+      <div class="sidebar-card">
+        <h3>Account</h3>
+        <p style="font-size:14px;color:var(--muted);">Paper trading account<br>All trades are simulated with real market prices.</p>
+      </div>
     </div>
+  </main>
 
-    <!-- External Script Engine -->
-    <script src="script.js"></script>
+  <!-- Lightweight Charts CDN -->
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="js/script.js"></script>
 </body>
 </html>

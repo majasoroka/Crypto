@@ -1,496 +1,281 @@
-// --- GLOBAL APPLICATION STATE ---
-let marketAssets = [];
-let selectedAsset = null;
-let orderMode = 'BUY';
-let orderType = 'MARKET';
-let portfolioTimeframe = '1D';
+// script.js - Main application logic
+import { fetchQuote, fetchChart, fetchMultipleQuotes, ALL_POPULAR, POPULAR_STOCKS, POPULAR_CRYPTO } from './api.js';
+import { loadPortfolio, createPortfolio, buy, sell, calculatePortfolioValue, savePortfolio } from './portfolio.js';
 
-let accountState = JSON.parse(localStorage.getItem('robinhood_ultimate_state')) || {
-    cash: 10000,
-    positions: [], // { id, symbol, name, shares, avgPrice, type, image }
-    history: [     // { id, type, symbol, shares, price, total, time }
-        { id: '1', type: 'DEPOSIT', symbol: 'USD', shares: 10000, price: 1, total: 10000, time: new Date().toLocaleDateString() }
-    ]
-};
+// Lightweight Charts is loaded via CDN in HTML
+const { createChart, LineSeries } = window.LightweightCharts || {};
 
-let chart, lineSeries;
+let portfolio = null;
+let currentQuotes = [];
+let currentView = 'portfolio'; // or 'asset'
+let currentAsset = null;
+let portfolioChart = null;
+let assetChart = null;
+let priceUpdateInterval = null;
 
-// --- INITIALIZATION ---
-window.onload = async () => {
-    initChart();
-    await fetchMarketData();
-    setupSearchListener();
-    setInterval(pollLiveMarkets, 15000); // Live price updates
-};
+// DOM refs
+const onboardingModal = document.getElementById('onboarding-modal');
+const startBtn = document.getElementById('start-btn');
+const startingCashInput = document.getElementById('starting-cash');
+const portfolioValueEl = document.getElementById('portfolio-value');
+const portfolioChangeEl = document.getElementById('portfolio-change');
+const positionsList = document.getElementById('positions-list');
+const buyingPowerEl = document.getElementById('buying-power');
+const searchInput = document.getElementById('search-input');
+const popularList = document.getElementById('popular-list');
+const assetDetail = document.getElementById('asset-detail');
+const portfolioView = document.getElementById('portfolio-view');
+const assetPriceEl = document.getElementById('asset-price');
+const assetChangeEl = document.getElementById('asset-change');
+const assetNameEl = document.getElementById('asset-name');
+const buyBtn = document.getElementById('buy-btn');
+const sellBtn = document.getElementById('sell-btn');
+const tradeModal = document.getElementById('trade-modal');
+const tradeQtyInput = document.getElementById('trade-qty');
+const tradeConfirmBtn = document.getElementById('trade-confirm');
+const tradeCancelBtn = document.getElementById('trade-cancel');
+const tradeTitle = document.getElementById('trade-title');
+let tradeAction = 'buy';
 
-// --- CHART SETUP ---
-function initChart() {
-    const container = document.getElementById('chart-container');
-    container.innerHTML = '';
-    chart = LightweightCharts.createChart(container, {
-        layout: {
-            background: { color: '#ffffff' },
-            textColor: '#1e222d',
-        },
-        grid: {
-            vertLines: { color: '#f4f6f8' },
-            horzLines: { color: '#f4f6f8' },
-        },
-        timeScale: {
-            timeVisible: true,
-            borderColor: '#e8ebef'
-        },
-        rightPriceScale: {
-            borderColor: '#e8ebef'
-        }
-    });
-    lineSeries = chart.addAreaSeries({
-        topColor: 'rgba(0, 200, 5, 0.25)',
-        bottomColor: 'rgba(0, 200, 5, 0.0)',
-        lineColor: '#00c805',
-        lineWidth: 2.5,
-    });
+function formatMoney(n) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(n);
 }
 
-// --- DATA FETCHING (Live Crypto + Stochastic Stock Simulation) ---
-async function fetchMarketData() {
-    try {
-        const res = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=15&page=1&sparkline=true');
-        const cryptoData = await res.json();
+function formatPct(n) {
+  const sign = n >= 0 ? '+' : '';
+  return `${sign}${n.toFixed(2)}%`;
+}
 
-        // Premium Stock Fallbacks with stochastic variation
-        const stockAssets = [
-            { id: 'apple', symbol: 'AAPL', name: 'Apple Inc.', current_price: 226.50, price_change_percentage_24h: 1.45, type: 'stock', image: 'https://assets.coingecko.com/coins/images/325/large/Tether.png', sparkline_in_7d: { price: [220, 222, 224, 226.5] } },
-            { id: 'tesla', symbol: 'TSLA', name: 'Tesla Motors', current_price: 242.80, price_change_percentage_24h: -2.10, type: 'stock', image: 'https://assets.coingecko.com/coins/images/6319/large/USD_Coin_icon.png', sparkline_in_7d: { price: [250, 248, 245, 242.8] } },
-            { id: 'nvidia', symbol: 'NVDA', name: 'NVIDIA Corp', current_price: 128.40, price_change_percentage_24h: 3.82, type: 'stock', image: 'https://assets.coingecko.com/coins/images/279/large/ethereum.png', sparkline_in_7d: { price: [122, 124, 126, 128.4] } },
-            { id: 'microsoft', symbol: 'MSFT', name: 'Microsoft Corp', current_price: 415.20, price_change_percentage_24h: 0.92, type: 'stock', image: 'https://assets.coingecko.com/coins/images/1/large/bitcoin.png', sparkline_in_7d: { price: [410, 412, 413, 415.2] } },
-            { id: 'amazon', symbol: 'AMZN', name: 'Amazon.com Inc', current_price: 186.70, price_change_percentage_24h: -0.45, type: 'stock', image: 'https://assets.coingecko.com/coins/images/325/large/Tether.png', sparkline_in_7d: { price: [188, 187, 186, 186.7] } }
-        ];
+function init() {
+  portfolio = loadPortfolio();
+  if (!portfolio) {
+    onboardingModal.style.display = 'flex';
+  } else {
+    onboardingModal.style.display = 'none';
+    startApp();
+  }
+}
 
-        const formattedCrypto = cryptoData.map(c => ({
-            id: c.id,
-            symbol: c.symbol.toUpperCase(),
-            name: c.name,
-            current_price: c.current_price,
-            price_change_percentage_24h: c.price_change_percentage_24h || 0,
-            type: 'crypto',
-            image: c.image,
-            sparkline_in_7d: c.sparkline_in_7d
-        }));
+startBtn.addEventListener('click', () => {
+  const cash = parseFloat(startingCashInput.value) || 10000;
+  if (cash < 100) {
+    alert('Please enter at least $100');
+    return;
+  }
+  portfolio = createPortfolio(cash);
+  onboardingModal.style.display = 'none';
+  startApp();
+});
 
-        marketAssets = [...stockAssets, ...formattedCrypto];
+async function startApp() {
+  await refreshQuotes();
+  renderPortfolio();
+  renderPopular();
+  startPriceUpdates();
+  setupSearch();
+}
 
-        if (!selectedAsset && marketAssets.length > 0) {
-            selectedAsset = marketAssets[0];
-            loadAssetIntoTradePanel(selectedAsset);
-        }
+async function refreshQuotes() {
+  const symbols = new Set(ALL_POPULAR);
+  Object.keys(portfolio.holdings).forEach(s => symbols.add(s));
+  currentQuotes = await fetchMultipleQuotes([...symbols]);
+}
 
-        renderWatchlist();
-        renderCryptoHub();
-        loadOptionsChain();
-        updateUI();
-    } catch (e) {
-        console.error("Market fetch error:", e);
+function renderPortfolio() {
+  const { total, positions } = calculatePortfolioValue(portfolio, currentQuotes);
+  portfolioValueEl.textContent = formatMoney(total);
+  // Approximate day change from quotes (simplified)
+  let dayChange = 0;
+  positions.forEach(p => {
+    dayChange += p.qty * (p.change || 0);
+  });
+  const dayPct = total > 0 ? (dayChange / (total - dayChange)) * 100 : 0;
+  portfolioChangeEl.textContent = `${dayChange >= 0 ? '+' : ''}${formatMoney(dayChange)} (${formatPct(dayPct)}) Today`;
+  portfolioChangeEl.className = `portfolio-change ${dayChange >= 0 ? 'positive' : 'negative'}`;
+  buyingPowerEl.innerHTML = `Buying Power <span>${formatMoney(portfolio.cash)}</span>`;
+
+  positionsList.innerHTML = '';
+  if (positions.length === 0) {
+    positionsList.innerHTML = '<p style="color:var(--muted);padding:20px 0;">No positions yet. Search and buy some assets!</p>';
+  } else {
+    positions.forEach(p => {
+      const el = document.createElement('div');
+      el.className = 'position-item';
+      el.innerHTML = `
+        <div class="position-info">
+          <div class="position-symbol">${p.symbol}</div>
+          <div class="position-name">${p.name}</div>
+        </div>
+        <div class="position-value">
+          <div style="font-weight:700">${formatMoney(p.value)}</div>
+          <div class="position-qty ${p.gain >= 0 ? 'positive' : 'negative'}">${p.gain >= 0 ? '+' : ''}${formatMoney(p.gain)} (${formatPct(p.gainPct)})</div>
+        </div>
+      `;
+      el.onclick = () => openAsset(p.symbol);
+      positionsList.appendChild(el);
+    });
+  }
+}
+
+async function renderPopular() {
+  popularList.innerHTML = '';
+  const popularQuotes = currentQuotes.filter(q => ALL_POPULAR.includes(q.symbol));
+  popularQuotes.slice(0, 8).forEach(q => {
+    const el = document.createElement('div');
+    el.className = 'asset-row';
+    const cls = q.change >= 0 ? 'positive' : 'negative';
+    el.innerHTML = `
+      <div>
+        <div class="asset-symbol">${q.symbol}</div>
+        <div style="font-size:12px;color:var(--muted)">${q.name}</div>
+      </div>
+      <div class="asset-price ${cls}">${formatMoney(q.price)}<br><small>${formatPct(q.changePct)}</small></div>
+    `;
+    el.onclick = () => openAsset(q.symbol);
+    popularList.appendChild(el);
+  });
+}
+
+async function openAsset(symbol) {
+  currentAsset = symbol;
+  currentView = 'asset';
+  portfolioView.style.display = 'none';
+  assetDetail.style.display = 'block';
+  const q = currentQuotes.find(x => x.symbol === symbol) || await fetchQuote(symbol);
+  if (!q) return;
+  assetNameEl.textContent = q.name;
+  assetPriceEl.textContent = formatMoney(q.price);
+  assetChangeEl.textContent = `${q.change >= 0 ? '+' : ''}${formatMoney(q.change)} (${formatPct(q.changePct)})`;
+  assetChangeEl.className = q.change >= 0 ? 'positive' : 'negative';
+  await loadAssetChart(symbol);
+}
+
+async function loadAssetChart(symbol) {
+  const container = document.getElementById('asset-chart');
+  container.innerHTML = '';
+  if (!createChart) {
+    container.innerHTML = '<div class="loading">Chart library loading...</div>';
+    return;
+  }
+  const points = await fetchChart(symbol, '1d', '5m');
+  if (points.length === 0) {
+    container.innerHTML = '<div class="loading">No chart data</div>';
+    return;
+  }
+  const chart = createChart(container, {
+    layout: { background: { color: '#ffffff' }, textColor: '#1B1B1B' },
+    grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
+    rightPriceScale: { borderVisible: false },
+    timeScale: { borderVisible: false },
+    crosshair: { mode: 0 },
+    width: container.clientWidth,
+    height: 280
+  });
+  const isUp = points[points.length - 1].value >= points[0].value;
+  const series = chart.addSeries(LineSeries, {
+    color: isUp ? '#00C805' : '#FF5000',
+    lineWidth: 2,
+    priceLineVisible: false
+  });
+  series.setData(points.map(p => ({ time: p.time, value: p.value })));
+  chart.timeScale().fitContent();
+  assetChart = chart;
+}
+
+function showPortfolio() {
+  currentView = 'portfolio';
+  assetDetail.style.display = 'none';
+  portfolioView.style.display = 'block';
+  if (assetChart) {
+    assetChart.remove();
+    assetChart = null;
+  }
+}
+
+document.getElementById('back-btn').addEventListener('click', showPortfolio);
+
+// Trade modal
+function openTrade(action) {
+  tradeAction = action;
+  tradeTitle.textContent = action === 'buy' ? 'Buy' : 'Sell';
+  tradeModal.style.display = 'flex';
+  tradeQtyInput.value = '1';
+  tradeQtyInput.focus();
+}
+
+buyBtn.addEventListener('click', () => openTrade('buy'));
+sellBtn.addEventListener('click', () => openTrade('sell'));
+
+tradeCancelBtn.addEventListener('click', () => tradeModal.style.display = 'none');
+
+tradeConfirmBtn.addEventListener('click', async () => {
+  const qty = parseFloat(tradeQtyInput.value);
+  if (!qty || qty <= 0) return alert('Enter a valid quantity');
+  const q = currentQuotes.find(x => x.symbol === currentAsset) || await fetchQuote(currentAsset);
+  if (!q) return alert('Could not get price');
+  let result;
+  if (tradeAction === 'buy') {
+    result = buy(portfolio, currentAsset, qty, q.price, q.name);
+  } else {
+    result = sell(portfolio, currentAsset, qty, q.price);
+  }
+  if (result.error) {
+    alert(result.error);
+    return;
+  }
+  tradeModal.style.display = 'none';
+  await refreshQuotes();
+  renderPortfolio();
+  if (currentView === 'asset') openAsset(currentAsset);
+});
+
+function setupSearch() {
+  searchInput.addEventListener('input', async (e) => {
+    const q = e.target.value.trim().toUpperCase();
+    if (q.length < 1) return;
+    // Simple: if matches popular or try fetch
+    if (ALL_POPULAR.includes(q) || q.endsWith('-USD')) {
+      openAsset(q);
     }
-}
-
-async function pollLiveMarkets() {
-    // Slight random walk simulation for hyper-realism
-    marketAssets.forEach(asset => {
-        const delta = (Math.random() - 0.49) * (asset.current_price * 0.002);
-        asset.current_price = parseFloat((asset.current_price + delta).toFixed(2));
-    });
-    updateUI();
-}
-
-// --- NAVIGATION & VIEWS ---
-function switchView(viewName) {
-    ['portfolio', 'crypto', 'options', 'history'].forEach(v => {
-        document.getElementById(`view-${v}`).classList.add('hidden');
-        document.getElementById(`view-${v}`).classList.remove('grid');
-        document.getElementById(`nav-btn-${v}`).className = 'text-gray-500 hover:text-black py-5 transition';
-    });
-
-    const target = document.getElementById(`view-${viewName}`);
-    target.classList.remove('hidden');
-    if (viewName === 'portfolio' || viewName === 'crypto') target.classList.add('grid');
-    document.getElementById(`nav-btn-${viewName}`).className = 'text-black border-b-2 border-black py-5 transition';
-}
-
-// --- SEARCH & WATCHLIST ---
-function setupSearchListener() {
-    const input = document.getElementById('global-search');
-    const dropdown = document.getElementById('search-dropdown');
-
-    input.addEventListener('input', (e) => {
-        const query = e.target.value.toLowerCase();
-        if (!query) {
-            dropdown.classList.add('hidden');
-            return;
-        }
-        const results = marketAssets.filter(a => a.name.toLowerCase().includes(query) || a.symbol.toLowerCase().includes(query));
-        dropdown.innerHTML = '';
-        if (results.length === 0) {
-            dropdown.innerHTML = `<div class="p-3 text-xs text-gray-400">No assets found</div>`;
-        } else {
-            results.forEach(asset => {
-                const div = document.createElement('div');
-                div.className = 'p-3 flex items-center justify-between hover:bg-rhGray cursor-pointer';
-                div.innerHTML = `
-                    <div class="flex items-center space-x-2.5">
-                        <img src="${asset.image}" class="w-6 h-6 rounded-full">
-                        <div><div class="font-bold text-xs uppercase text-black">${asset.symbol}</div><div class="text-[10px] text-gray-400">${asset.name}</div></div>
-                    </div>
-                    <div class="text-right font-bold text-xs">$${asset.current_price.toLocaleString()}</div>
-                `;
-                div.onclick = () => {
-                    loadAssetIntoTradePanel(asset);
-                    dropdown.classList.add('hidden');
-                    input.value = '';
-                    switchView('portfolio');
-                };
-                dropdown.appendChild(div);
-            });
-        }
-        dropdown.classList.remove('hidden');
-    });
-}
-
-function renderWatchlist() {
-    const container = document.getElementById('watchlist-container');
-    container.innerHTML = '';
-    marketAssets.slice(0, 8).forEach(asset => {
-        const isPos = asset.price_change_percentage_24h >= 0;
-        const div = document.createElement('div');
-        div.className = 'flex items-center justify-between py-3 px-2 hover:bg-rhGray rounded-2xl cursor-pointer transition';
-        div.onclick = () => loadAssetIntoTradePanel(asset);
-        div.innerHTML = `
-            <div class="flex items-center space-x-3">
-                <img src="${asset.image}" class="w-8 h-8 rounded-full">
-                <div><div class="font-bold text-sm uppercase text-black">${asset.symbol}</div><div class="text-xs text-gray-500">${asset.name}</div></div>
-            </div>
-            <div class="text-right">
-                <div class="font-bold text-sm text-black">$${asset.current_price.toLocaleString()}</div>
-                <div class="text-xs font-semibold ${isPos ? 'text-rhGreen' : 'text-rhRed'}">${isPos ? '+' : ''}${asset.price_change_percentage_24h.toFixed(2)}%</div>
-            </div>
-        `;
-        container.appendChild(div);
-    });
-}
-
-function loadAssetIntoTradePanel(asset) {
-    selectedAsset = asset;
-    document.getElementById('trade-asset-title').innerText = asset.name;
-    document.getElementById('trade-asset-symbol').innerText = `${asset.symbol} · ${asset.type.toUpperCase()}`;
-    document.getElementById('trade-asset-price').innerText = `$${asset.current_price.toLocaleString()}`;
-    const changeElem = document.getElementById('trade-asset-change');
-    const isPos = asset.price_change_percentage_24h >= 0;
-    changeElem.innerText = `${isPos ? '+' : ''}${asset.price_change_percentage_24h.toFixed(2)}%`;
-    changeElem.className = `text-xs font-semibold ${isPos ? 'text-rhGreen' : 'text-rhRed'}`;
-
-    // Load Chart Data
-    const sparkline = asset.sparkline_in_7d?.price || [asset.current_price * 0.95, asset.current_price];
-    let time = Math.floor(Date.now() / 1000) - (sparkline.length * 3600);
-    const chartData = sparkline.map(val => ({ time: time += 3600, value: val }));
-    lineSeries.setData(chartData);
-    chart.timeScale().fitContent();
-    calculateEstShares();
-}
-
-// --- TRADING ENGINE ---
-function setOrderMode(mode) {
-    orderMode = mode;
-    const buyBtn = document.getElementById('mode-buy');
-    const sellBtn = document.getElementById('mode-sell');
-    const subBtn = document.getElementById('order-submit-btn');
-
-    if (mode === 'BUY') {
-        buyBtn.className = 'py-2.5 rounded-xl bg-white text-black shadow-sm cursor-pointer transition';
-        sellBtn.className = 'py-2.5 rounded-xl text-gray-500 cursor-pointer transition';
-        subBtn.className = 'w-full bg-rhGreen text-white font-bold py-4 rounded-full hover:bg-rhGreenHover transition shadow-lg text-sm';
-        subBtn.innerText = `Buy ${selectedAsset ? selectedAsset.symbol : ''}`;
-    } else {
-        buyBtn.className = 'py-2.5 rounded-xl text-gray-500 cursor-pointer transition';
-        sellBtn.className = 'py-2.5 rounded-xl bg-white text-black shadow-sm cursor-pointer transition';
-        subBtn.className = 'w-full bg-rhRed text-white font-bold py-4 rounded-full hover:bg-red-600 transition shadow-lg text-sm';
-        subBtn.innerText = `Sell ${selectedAsset ? selectedAsset.symbol : ''}`;
+  });
+  searchInput.addEventListener('keydown', async (e) => {
+    if (e.key === 'Enter') {
+      const symbol = searchInput.value.trim().toUpperCase();
+      if (symbol) openAsset(symbol);
     }
+  });
 }
 
-function toggleOrderType() {
-    orderType = document.getElementById('order-type-select').value;
-    const limitContainer = document.getElementById('limit-price-container');
-    if (orderType === 'LIMIT' || orderType === 'STOP') {
-        limitContainer.classList.remove('hidden');
-        if (selectedAsset) document.getElementById('limit-price-input').value = selectedAsset.current_price;
-    } else {
-        limitContainer.classList.add('hidden');
+function startPriceUpdates() {
+  if (priceUpdateInterval) clearInterval(priceUpdateInterval);
+  priceUpdateInterval = setInterval(async () => {
+    await refreshQuotes();
+    if (currentView === 'portfolio') renderPortfolio();
+    renderPopular();
+    if (currentView === 'asset' && currentAsset) {
+      const q = currentQuotes.find(x => x.symbol === currentAsset);
+      if (q) {
+        assetPriceEl.textContent = formatMoney(q.price);
+        assetChangeEl.textContent = `${q.change >= 0 ? '+' : ''}${formatMoney(q.change)} (${formatPct(q.changePct)})`;
+        assetChangeEl.className = q.change >= 0 ? 'positive' : 'negative';
+      }
     }
+  }, 15000); // every 15s
 }
 
-document.getElementById('trade-amount').addEventListener('input', calculateEstShares);
-function calculateEstShares() {
-    const amount = parseFloat(document.getElementById('trade-amount').value) || 0;
-    if (!selectedAsset) return;
-    const shares = amount / selectedAsset.current_price;
-    document.getElementById('est-shares-calc').innerText = `${shares.toFixed(4)} shares`;
-}
+// Timeframe buttons (stub - can expand)
+document.querySelectorAll('.timeframe-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.timeframe-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    // In full version, reload chart with different range
+  });
+});
 
-function executeOrder() {
-    if (!selectedAsset) return;
-    const amount = parseFloat(document.getElementById('trade-amount').value);
-    if (isNaN(amount) || amount <= 0) {
-        alert('Please enter a valid dollar amount.');
-        return;
-    }
+// Init
+init();
 
-    const executionPrice = orderType === 'MARKET' ? selectedAsset.current_price : parseFloat(document.getElementById('limit-price-input').value);
-
-    if (orderMode === 'BUY') {
-        if (amount > accountState.cash) {
-            alert('Insufficient buying power.');
-            return;
-        }
-        accountState.cash -= amount;
-        const sharesBought = amount / executionPrice;
-
-        const existing = accountState.positions.find(p => p.id === selectedAsset.id);
-        if (existing) {
-            const totalShares = existing.shares + sharesBought;
-            existing.avgPrice = ((existing.shares * existing.avgPrice) + amount) / totalShares;
-            existing.shares = totalShares;
-        } else {
-            accountState.positions.push({
-                id: selectedAsset.id,
-                symbol: selectedAsset.symbol,
-                name: selectedAsset.name,
-                shares: sharesBought,
-                avgPrice: executionPrice,
-                type: selectedAsset.type,
-                image: selectedAsset.image
-            });
-        }
-    } else {
-        const existing = accountState.positions.find(p => p.id === selectedAsset.id);
-        if (!existing) {
-            alert('You do not own this position.');
-            return;
-        }
-        const sharesToSell = amount / executionPrice;
-        if (sharesToSell > existing.shares) {
-            alert('You cannot sell more shares than you own.');
-            return;
-        }
-        existing.shares -= sharesToSell;
-        accountState.cash += amount;
-
-        if (existing.shares <= 0.000001) {
-            accountState.positions = accountState.positions.filter(p => p.id !== selectedAsset.id);
-        }
-    }
-
-    accountState.history.unshift({
-        id: Math.random().toString(36).substring(2, 9),
-        type: `${orderMode} (${orderType})`,
-        symbol: selectedAsset.symbol,
-        shares: amount / executionPrice,
-        price: executionPrice,
-        total: amount,
-        time: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    });
-
-    saveAndRefresh();
-    alert(`Successfully executed ${orderMode} order for ${selectedAsset.symbol}!`);
-}
-
-// --- OPTIONS CHAIN ---
-function loadOptionsChain() {
-    const assetSymbol = document.getElementById('options-asset-select').value;
-    const asset = marketAssets.find(a => a.symbol === assetSymbol) || { current_price: 200 };
-    const basePrice = asset.current_price;
-
-    const callsBody = document.getElementById('calls-table-body');
-    const putsBody = document.getElementById('puts-table-body');
-    callsBody.innerHTML = '';
-    putsBody.innerHTML = '';
-
-    for (let i = -3; i <= 3; i++) {
-        const strike = Math.round(basePrice + (i * 5));
-        const callBid = (Math.max(1, (basePrice - strike) + (Math.random() * 5))).toFixed(2);
-        const callAsk = (parseFloat(callBid) + 0.35).toFixed(2);
-        const putBid = (Math.max(1, (strike - basePrice) + (Math.random() * 5))).toFixed(2);
-        const putAsk = (parseFloat(putBid) + 0.35).toFixed(2);
-
-        // Calls Row
-        const trC = document.createElement('tr');
-        trC.innerHTML = `
-            <td class="py-3 font-bold text-black">$${strike}</td>
-            <td class="py-3 text-gray-600">$${callBid}</td>
-            <td class="py-3 text-black font-semibold">$${callAsk}</td>
-            <td class="py-3 text-gray-400">34.2%</td>
-            <td class="py-3 text-right"><button onclick="tradeOption('CALL', ${strike}, ${callAsk})" class="bg-rhGreen/10 text-rhGreen hover:bg-rhGreen hover:text-white px-3 py-1 rounded-full font-bold transition">Buy Call</button></td>
-        `;
-        callsBody.appendChild(trC);
-
-        // Puts Row
-        const trP = document.createElement('tr');
-        trP.innerHTML = `
-            <td class="py-3 font-bold text-black">$${strike}</td>
-            <td class="py-3 text-gray-600">$${putBid}</td>
-            <td class="py-3 text-black font-semibold">$${putAsk}</td>
-            <td class="py-3 text-gray-400">38.9%</td>
-            <td class="py-3 text-right"><button onclick="tradeOption('PUT', ${strike}, ${putAsk})" class="bg-rhRed/10 text-rhRed hover:bg-rhRed hover:text-white px-3 py-1 rounded-full font-bold transition">Buy Put</button></td>
-        `;
-        putsBody.appendChild(trP);
-    }
-}
-
-function tradeOption(type, strike, askPrice) {
-    const cost = askPrice * 100; // Options contracts represent 100 shares
-    if (cost > accountState.cash) {
-        alert('Insufficient buying power for options contract.');
-        return;
-    }
-    accountState.cash -= cost;
-    accountState.history.unshift({
-        id: Math.random().toString(36).substring(2, 9),
-        type: `OPTIONS ${type}`,
-        symbol: `${document.getElementById('options-asset-select').value} $${strike}`,
-        shares: 1,
-        price: askPrice,
-        total: cost,
-        time: new Date().toLocaleDateString()
-    });
-    saveAndRefresh();
-    alert(`Successfully purchased 1 ${type} contract at $${strike} strike!`);
-}
-
-// --- CRYPTO HUB & LEDGER RENDERERS ---
-function renderCryptoHub() {
-    const grid = document.getElementById('crypto-market-grid');
-    grid.innerHTML = '';
-    marketAssets.filter(a => a.type === 'crypto').forEach(crypto => {
-        const isPos = crypto.price_change_percentage_24h >= 0;
-        const card = document.createElement('div');
-        card.className = 'border border-rhBorder rounded-2xl p-4 flex items-center justify-between hover:border-black cursor-pointer transition';
-        card.onclick = () => { loadAssetIntoTradePanel(crypto); switchView('portfolio'); };
-        card.innerHTML = `
-            <div class="flex items-center space-x-3">
-                <img src="${crypto.image}" class="w-10 h-10 rounded-full">
-                <div><div class="font-bold text-sm text-black">${crypto.name}</div><div class="text-xs uppercase text-gray-400">${crypto.symbol}</div></div>
-            </div>
-            <div class="text-right">
-                <div class="font-bold text-sm text-black">$${crypto.current_price.toLocaleString()}</div>
-                <div class="text-xs font-semibold ${isPos ? 'text-rhGreen' : 'text-rhRed'}">${isPos ? '+' : ''}${crypto.price_change_percentage_24h.toFixed(2)}%</div>
-            </div>
-        `;
-        grid.appendChild(card);
-    });
-}
-
-function renderHistoryLedger() {
-    const ledger = document.getElementById('history-ledger-list');
-    ledger.innerHTML = '';
-    if (accountState.history.length === 0) {
-        ledger.innerHTML = `<div class="text-center text-gray-400 py-6 text-sm">No recorded transactions yet.</div>`;
-        return;
-    }
-    accountState.history.forEach(h => {
-        const item = document.createElement('div');
-        item.className = 'flex items-center justify-between py-3';
-        item.innerHTML = `
-            <div><div class="font-bold text-sm text-black">${h.type} — ${h.symbol}</div><div class="text-xs text-gray-400">${h.time}</div></div>
-            <div class="text-right"><div class="font-bold text-sm text-black">$${h.total.toLocaleString(undefined, {minimumFractionDigits: 2})}</div><div class="text-xs text-gray-500">${h.shares.toFixed(3)} units @ $${h.price}</div></div>
-        `;
-        ledger.appendChild(item);
-    });
-}
-
-// --- UI REFRESH & STATE PERSISTENCE ---
-function updateUI() {
-    document.getElementById('cash-balance').innerText = `$${accountState.cash.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-
-    let portfolioVal = accountState.cash;
-    const posList = document.getElementById('positions-list');
-    posList.innerHTML = '';
-
-    if (accountState.positions.length === 0) {
-        posList.innerHTML = `<div class="text-gray-400 text-sm py-4 text-center">No open positions. Start investing!</div>`;
-    } else {
-        accountState.positions.forEach(pos => {
-            const live = marketAssets.find(a => a.id === pos.id) || pos;
-            const currentVal = pos.shares * live.current_price;
-            portfolioVal += currentVal;
-            const pnl = currentVal - (pos.shares * pos.avgPrice);
-            const isGreen = pnl >= 0;
-
-            const div = document.createElement('div');
-            div.className = 'flex items-center justify-between py-3';
-            div.innerHTML = `
-                <div class="flex items-center space-x-3">
-                    <img src="${pos.image}" class="w-8 h-8 rounded-full">
-                    <div><div class="font-bold text-sm uppercase text-black">${pos.symbol}</div><div class="text-xs text-gray-500">${pos.shares.toFixed(4)} shares</div></div>
-                </div>
-                <div class="text-right">
-                    <div class="font-bold text-sm text-black">$${currentVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</div>
-                    <div class="text-xs font-semibold ${isGreen ? 'text-rhGreen' : 'text-rhRed'}">${isGreen ? '+' : ''}$${pnl.toFixed(2)}</div>
-                </div>
-            `;
-            posList.appendChild(div);
-        });
-    }
-
-    document.getElementById('main-portfolio-val').innerText = `$${portfolioVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-    document.getElementById('header-portfolio-val').innerText = `$${portfolioVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-
-    renderHistoryLedger();
-}
-
-function saveAndRefresh() {
-    localStorage.setItem('robinhood_ultimate_state', JSON.stringify(accountState));
-    updateUI();
-}
-
-// --- MODALS & EXPORTS ---
-let modalMode = 'deposit';
-function openDepositModal() {
-    modalMode = 'deposit';
-    document.getElementById('modal-title').innerText = 'Deposit Cash';
-    document.getElementById('modal-overlay').style.display = 'flex';
-}
-function openAccountModal() {
-    modalMode = 'account';
-    document.getElementById('modal-title').innerText = 'Reset Account Balance';
-    document.getElementById('modal-overlay').style.display = 'flex';
-}
-function closeModal() {
-    document.getElementById('modal-overlay').style.display = 'none';
-}
-function confirmModalAction() {
-    const val = parseFloat(document.getElementById('modal-input').value);
-    if (!isNaN(val) && val > 0) {
-        if (modalMode === 'deposit') {
-            accountState.cash += val;
-            accountState.history.unshift({ id: 'dep', type: 'DEPOSIT', symbol: 'USD', shares: val, price: 1, total: val, time: new Date().toLocaleDateString() });
-        } else {
-            accountState.cash = val;
-            accountState.positions = [];
-            accountState.history = [];
-        }
-        saveAndRefresh();
-        closeModal();
-    }
-}
-
-function exportAccountStatement() {
-    let csv = 'ID,Type,Symbol,Shares,Price,Total,Timestamp\n';
-    accountState.history.forEach(h => {
-        csv += `${h.id},${h.type},${h.symbol},${h.shares},${h.price},${h.total},${h.time}\n`;
-    });
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'Robinhood_Account_Statement.csv';
-    a.click();
-}
+// Resize charts
+window.addEventListener('resize', () => {
+  if (assetChart) assetChart.applyOptions({ width: document.getElementById('asset-chart').clientWidth });
+});
