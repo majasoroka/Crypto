@@ -1,46 +1,122 @@
-// script.js - Main application logic
-import { fetchQuote, fetchChart, fetchMultipleQuotes, ALL_POPULAR, POPULAR_STOCKS, POPULAR_CRYPTO } from './api.js';
-import { loadPortfolio, createPortfolio, buy, sell, calculatePortfolioValue, savePortfolio } from './portfolio.js';
+// Single-file script - no modules so it works reliably on GitHub Pages
+const PROXY = 'https://proxy.cors.dev/';
+const STORAGE_KEY = 'paper_portfolio_v1';
 
-// Lightweight Charts is loaded via CDN in HTML
-const { createChart, LineSeries } = window.LightweightCharts || {};
+const POPULAR_STOCKS = ['AAPL', 'TSLA', 'NVDA', 'MSFT', 'AMZN', 'GOOGL', 'META', 'AMD'];
+const POPULAR_CRYPTO = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'DOGE-USD'];
+const ALL_POPULAR = [...POPULAR_STOCKS, ...POPULAR_CRYPTO];
 
+// Portfolio functions
+function loadPortfolio() {
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch { return null; }
+}
+function savePortfolio(p) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
+}
+function createPortfolio(startingCash) {
+  const p = { cash: startingCash, holdings: {}, history: [], createdAt: Date.now() };
+  savePortfolio(p);
+  return p;
+}
+function buy(portfolio, symbol, qty, price, name) {
+  const cost = qty * price;
+  if (cost > portfolio.cash + 0.01) return { error: 'Insufficient buying power' };
+  portfolio.cash -= cost;
+  if (!portfolio.holdings[symbol]) {
+    portfolio.holdings[symbol] = { qty: 0, avgCost: 0, name: name || symbol };
+  }
+  const h = portfolio.holdings[symbol];
+  const totalCost = h.avgCost * h.qty + cost;
+  h.qty += qty;
+  h.avgCost = totalCost / h.qty;
+  portfolio.history.push({ type: 'buy', symbol, qty, price, total: cost, time: Date.now() });
+  savePortfolio(portfolio);
+  return { success: true };
+}
+function sell(portfolio, symbol, qty, price) {
+  const h = portfolio.holdings[symbol];
+  if (!h || h.qty < qty) return { error: 'Not enough shares' };
+  const proceeds = qty * price;
+  portfolio.cash += proceeds;
+  h.qty -= qty;
+  if (h.qty <= 0.000001) delete portfolio.holdings[symbol];
+  portfolio.history.push({ type: 'sell', symbol, qty, price, total: proceeds, time: Date.now() });
+  savePortfolio(portfolio);
+  return { success: true };
+}
+function calculatePortfolioValue(portfolio, quotes) {
+  let holdingsValue = 0;
+  const positions = [];
+  for (const [symbol, h] of Object.entries(portfolio.holdings)) {
+    const q = quotes.find(x => x.symbol === symbol);
+    const price = q ? q.price : h.avgCost;
+    const value = h.qty * price;
+    holdingsValue += value;
+    const gain = value - (h.qty * h.avgCost);
+    const gainPct = h.avgCost ? (gain / (h.qty * h.avgCost)) * 100 : 0;
+    positions.push({
+      symbol, name: h.name || symbol, qty: h.qty, avgCost: h.avgCost,
+      price, value, gain, gainPct, change: q ? q.change : 0, changePct: q ? q.changePct : 0
+    });
+  }
+  return { total: portfolio.cash + holdingsValue, holdingsValue, positions };
+}
+
+// API functions
+async function fetchQuote(symbol) {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
+    const res = await fetch(PROXY + url);
+    if (!res.ok) throw new Error('failed');
+    const data = await res.json();
+    const meta = data.chart.result[0].meta;
+    const prev = meta.chartPreviousClose || meta.previousClose;
+    const price = meta.regularMarketPrice;
+    const change = price - prev;
+    const changePct = (change / prev) * 100;
+    return {
+      symbol: meta.symbol,
+      name: meta.longName || meta.shortName || symbol,
+      price, change, changePct, previousClose: prev
+    };
+  } catch (e) {
+    console.error(e);
+    return null;
+  }
+}
+async function fetchChart(symbol, range = '1d', interval = '5m') {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}`;
+    const res = await fetch(PROXY + url);
+    if (!res.ok) throw new Error('failed');
+    const data = await res.json();
+    const result = data.chart.result[0];
+    const timestamps = result.timestamp || [];
+    const closes = result.indicators.quote[0].close || [];
+    return timestamps.map((t, i) => ({ time: t, value: closes[i] })).filter(p => p.value != null);
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+async function fetchMultipleQuotes(symbols) {
+  const results = await Promise.all(symbols.map(s => fetchQuote(s)));
+  return results.filter(Boolean);
+}
+
+// App logic
 let portfolio = null;
 let currentQuotes = [];
-let currentView = 'portfolio'; // or 'asset'
+let currentView = 'portfolio';
 let currentAsset = null;
-let portfolioChart = null;
 let assetChart = null;
 let priceUpdateInterval = null;
-
-// DOM refs
-const onboardingModal = document.getElementById('onboarding-modal');
-const startBtn = document.getElementById('start-btn');
-const startingCashInput = document.getElementById('starting-cash');
-const portfolioValueEl = document.getElementById('portfolio-value');
-const portfolioChangeEl = document.getElementById('portfolio-change');
-const positionsList = document.getElementById('positions-list');
-const buyingPowerEl = document.getElementById('buying-power');
-const searchInput = document.getElementById('search-input');
-const popularList = document.getElementById('popular-list');
-const assetDetail = document.getElementById('asset-detail');
-const portfolioView = document.getElementById('portfolio-view');
-const assetPriceEl = document.getElementById('asset-price');
-const assetChangeEl = document.getElementById('asset-change');
-const assetNameEl = document.getElementById('asset-name');
-const buyBtn = document.getElementById('buy-btn');
-const sellBtn = document.getElementById('sell-btn');
-const tradeModal = document.getElementById('trade-modal');
-const tradeQtyInput = document.getElementById('trade-qty');
-const tradeConfirmBtn = document.getElementById('trade-confirm');
-const tradeCancelBtn = document.getElementById('trade-cancel');
-const tradeTitle = document.getElementById('trade-title');
-let tradeAction = 'buy';
 
 function formatMoney(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(n);
 }
-
 function formatPct(n) {
   const sign = n >= 0 ? '+' : '';
   return `${sign}${n.toFixed(2)}%`;
@@ -48,18 +124,20 @@ function formatPct(n) {
 
 function init() {
   portfolio = loadPortfolio();
+  const modal = document.getElementById('onboarding-modal');
+  const app = document.getElementById('app');
   if (!portfolio) {
-    document.getElementById('onboarding-modal').style.display = 'flex';
-    document.getElementById('app').style.display = 'none';
+    modal.style.display = 'flex';
+    app.style.display = 'none';
   } else {
-    document.getElementById('onboarding-modal').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
+    modal.style.display = 'none';
+    app.style.display = 'block';
     startApp();
   }
 }
 
-startBtn.addEventListener('click', () => {
-  const cash = parseFloat(startingCashInput.value) || 10000;
+document.getElementById('start-btn').addEventListener('click', () => {
+  const cash = parseFloat(document.getElementById('starting-cash').value) || 10000;
   if (cash < 100) {
     alert('Please enter at least $100');
     return;
@@ -86,20 +164,19 @@ async function refreshQuotes() {
 
 function renderPortfolio() {
   const { total, positions } = calculatePortfolioValue(portfolio, currentQuotes);
-  portfolioValueEl.textContent = formatMoney(total);
-  // Approximate day change from quotes (simplified)
+  document.getElementById('portfolio-value').textContent = formatMoney(total);
   let dayChange = 0;
-  positions.forEach(p => {
-    dayChange += p.qty * (p.change || 0);
-  });
+  positions.forEach(p => { dayChange += p.qty * (p.change || 0); });
   const dayPct = total > 0 ? (dayChange / (total - dayChange)) * 100 : 0;
-  portfolioChangeEl.textContent = `${dayChange >= 0 ? '+' : ''}${formatMoney(dayChange)} (${formatPct(dayPct)}) Today`;
-  portfolioChangeEl.className = `portfolio-change ${dayChange >= 0 ? 'positive' : 'negative'}`;
-  buyingPowerEl.innerHTML = `Buying Power <span>${formatMoney(portfolio.cash)}</span>`;
+  const changeEl = document.getElementById('portfolio-change');
+  changeEl.textContent = `${dayChange >= 0 ? '+' : ''}${formatMoney(dayChange)} (${formatPct(dayPct)}) Today`;
+  changeEl.className = `portfolio-change ${dayChange >= 0 ? 'positive' : 'negative'}`;
+  document.getElementById('buying-power').innerHTML = `Buying Power <span>${formatMoney(portfolio.cash)}</span>`;
 
-  positionsList.innerHTML = '';
+  const list = document.getElementById('positions-list');
+  list.innerHTML = '';
   if (positions.length === 0) {
-    positionsList.innerHTML = '<p style="color:var(--muted);padding:20px 0;">No positions yet. Search and buy some assets!</p>';
+    list.innerHTML = '<p style="color:#5C6166;padding:20px 0;">No positions yet. Search and buy some assets!</p>';
   } else {
     positions.forEach(p => {
       const el = document.createElement('div');
@@ -115,13 +192,14 @@ function renderPortfolio() {
         </div>
       `;
       el.onclick = () => openAsset(p.symbol);
-      positionsList.appendChild(el);
+      list.appendChild(el);
     });
   }
 }
 
 async function renderPopular() {
-  popularList.innerHTML = '';
+  const list = document.getElementById('popular-list');
+  list.innerHTML = '';
   const popularQuotes = currentQuotes.filter(q => ALL_POPULAR.includes(q.symbol));
   popularQuotes.slice(0, 8).forEach(q => {
     const el = document.createElement('div');
@@ -130,36 +208,38 @@ async function renderPopular() {
     el.innerHTML = `
       <div>
         <div class="asset-symbol">${q.symbol}</div>
-        <div style="font-size:12px;color:var(--muted)">${q.name}</div>
+        <div style="font-size:12px;color:#5C6166">${q.name}</div>
       </div>
       <div class="asset-price ${cls}">${formatMoney(q.price)}<br><small>${formatPct(q.changePct)}</small></div>
     `;
     el.onclick = () => openAsset(q.symbol);
-    popularList.appendChild(el);
+    list.appendChild(el);
   });
 }
 
 async function openAsset(symbol) {
   currentAsset = symbol;
   currentView = 'asset';
-  portfolioView.style.display = 'none';
-  assetDetail.style.display = 'block';
+  document.getElementById('portfolio-view').style.display = 'none';
+  document.getElementById('asset-detail').style.display = 'block';
   const q = currentQuotes.find(x => x.symbol === symbol) || await fetchQuote(symbol);
   if (!q) return;
-  assetNameEl.textContent = q.name;
-  assetPriceEl.textContent = formatMoney(q.price);
-  assetChangeEl.textContent = `${q.change >= 0 ? '+' : ''}${formatMoney(q.change)} (${formatPct(q.changePct)})`;
-  assetChangeEl.className = q.change >= 0 ? 'positive' : 'negative';
+  document.getElementById('asset-name').textContent = q.name;
+  document.getElementById('asset-price').textContent = formatMoney(q.price);
+  const changeEl = document.getElementById('asset-change');
+  changeEl.textContent = `${q.change >= 0 ? '+' : ''}${formatMoney(q.change)} (${formatPct(q.changePct)})`;
+  changeEl.className = q.change >= 0 ? 'positive' : 'negative';
   await loadAssetChart(symbol);
 }
 
 async function loadAssetChart(symbol) {
   const container = document.getElementById('asset-chart');
   container.innerHTML = '';
-  if (!createChart) {
-    container.innerHTML = '<div class="loading">Chart library loading...</div>';
+  if (!window.LightweightCharts) {
+    container.innerHTML = '<div class="loading">Chart loading...</div>';
     return;
   }
+  const { createChart, LineSeries } = window.LightweightCharts;
   const points = await fetchChart(symbol, '1d', '5m');
   if (points.length === 0) {
     container.innerHTML = '<div class="loading">No chart data</div>';
@@ -170,80 +250,60 @@ async function loadAssetChart(symbol) {
     grid: { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
     rightPriceScale: { borderVisible: false },
     timeScale: { borderVisible: false },
-    crosshair: { mode: 0 },
     width: container.clientWidth,
     height: 280
   });
   const isUp = points[points.length - 1].value >= points[0].value;
   const series = chart.addSeries(LineSeries, {
     color: isUp ? '#00C805' : '#FF5000',
-    lineWidth: 2,
-    priceLineVisible: false
+    lineWidth: 2
   });
   series.setData(points.map(p => ({ time: p.time, value: p.value })));
   chart.timeScale().fitContent();
   assetChart = chart;
 }
 
-function showPortfolio() {
+document.getElementById('back-btn').addEventListener('click', () => {
   currentView = 'portfolio';
-  assetDetail.style.display = 'none';
-  portfolioView.style.display = 'block';
-  if (assetChart) {
-    assetChart.remove();
-    assetChart = null;
-  }
-}
+  document.getElementById('asset-detail').style.display = 'none';
+  document.getElementById('portfolio-view').style.display = 'block';
+  if (assetChart) { assetChart.remove(); assetChart = null; }
+});
 
-document.getElementById('back-btn').addEventListener('click', showPortfolio);
-
-// Trade modal
-function openTrade(action) {
-  tradeAction = action;
-  tradeTitle.textContent = action === 'buy' ? 'Buy' : 'Sell';
-  tradeModal.style.display = 'flex';
-  tradeQtyInput.value = '1';
-  tradeQtyInput.focus();
-}
-
-buyBtn.addEventListener('click', () => openTrade('buy'));
-sellBtn.addEventListener('click', () => openTrade('sell'));
-
-tradeCancelBtn.addEventListener('click', () => tradeModal.style.display = 'none');
-
-tradeConfirmBtn.addEventListener('click', async () => {
-  const qty = parseFloat(tradeQtyInput.value);
+let tradeAction = 'buy';
+document.getElementById('buy-btn').addEventListener('click', () => {
+  tradeAction = 'buy';
+  document.getElementById('trade-title').textContent = 'Buy';
+  document.getElementById('trade-modal').style.display = 'flex';
+});
+document.getElementById('sell-btn').addEventListener('click', () => {
+  tradeAction = 'sell';
+  document.getElementById('trade-title').textContent = 'Sell';
+  document.getElementById('trade-modal').style.display = 'flex';
+});
+document.getElementById('trade-cancel').addEventListener('click', () => {
+  document.getElementById('trade-modal').style.display = 'none';
+});
+document.getElementById('trade-confirm').addEventListener('click', async () => {
+  const qty = parseFloat(document.getElementById('trade-qty').value);
   if (!qty || qty <= 0) return alert('Enter a valid quantity');
   const q = currentQuotes.find(x => x.symbol === currentAsset) || await fetchQuote(currentAsset);
   if (!q) return alert('Could not get price');
-  let result;
-  if (tradeAction === 'buy') {
-    result = buy(portfolio, currentAsset, qty, q.price, q.name);
-  } else {
-    result = sell(portfolio, currentAsset, qty, q.price);
-  }
-  if (result.error) {
-    alert(result.error);
-    return;
-  }
-  tradeModal.style.display = 'none';
+  let result = tradeAction === 'buy'
+    ? buy(portfolio, currentAsset, qty, q.price, q.name)
+    : sell(portfolio, currentAsset, qty, q.price);
+  if (result.error) { alert(result.error); return; }
+  document.getElementById('trade-modal').style.display = 'none';
   await refreshQuotes();
   renderPortfolio();
   if (currentView === 'asset') openAsset(currentAsset);
 });
 
 function setupSearch() {
-  searchInput.addEventListener('input', async (e) => {
-    const q = e.target.value.trim().toUpperCase();
-    if (q.length < 1) return;
-    // Simple: if matches popular or try fetch
-    if (ALL_POPULAR.includes(q) || q.endsWith('-USD')) {
-      openAsset(q);
-    }
-  });
-  searchInput.addEventListener('keydown', async (e) => {
+  const input = document.getElementById('search-input');
+  input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
-      const symbol = searchInput.value.trim().toUpperCase();
+      const symbol = input.value.trim().toUpperCase();
       if (symbol) openAsset(symbol);
     }
   });
@@ -258,27 +318,14 @@ function startPriceUpdates() {
     if (currentView === 'asset' && currentAsset) {
       const q = currentQuotes.find(x => x.symbol === currentAsset);
       if (q) {
-        assetPriceEl.textContent = formatMoney(q.price);
-        assetChangeEl.textContent = `${q.change >= 0 ? '+' : ''}${formatMoney(q.change)} (${formatPct(q.changePct)})`;
-        assetChangeEl.className = q.change >= 0 ? 'positive' : 'negative';
+        document.getElementById('asset-price').textContent = formatMoney(q.price);
+        const changeEl = document.getElementById('asset-change');
+        changeEl.textContent = `${q.change >= 0 ? '+' : ''}${formatMoney(q.change)} (${formatPct(q.changePct)})`;
+        changeEl.className = q.change >= 0 ? 'positive' : 'negative';
       }
     }
-  }, 15000); // every 15s
+  }, 15000);
 }
 
-// Timeframe buttons (stub - can expand)
-document.querySelectorAll('.timeframe-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('.timeframe-btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    // In full version, reload chart with different range
-  });
-});
-
-// Init
+// Start
 init();
-
-// Resize charts
-window.addEventListener('resize', () => {
-  if (assetChart) assetChart.applyOptions({ width: document.getElementById('asset-chart').clientWidth });
-});
